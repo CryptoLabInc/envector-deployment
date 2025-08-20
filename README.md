@@ -111,7 +111,7 @@ docker compose -f docker-compose.yml -p envector up -d
 
 Recommended for production.
 
-#### Method A: Clone Repository
+#### Clone Repository
 ```bash
 # Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
@@ -119,18 +119,6 @@ cd envector-deployment
 
 # Install Helm chart
 helm install envector ./kubernetes-manifests/helm
-
-# Check deployment status
-kubectl get pods
-
-# Access services
-kubectl get svc
-```
-
-#### Method B: Direct HTTP Usage
-```bash
-# Install directly from GitHub
-helm install envector https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/kubernetes-manifests/helm
 
 # Check deployment status
 kubectl get pods
