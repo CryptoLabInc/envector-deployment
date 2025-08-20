@@ -63,7 +63,9 @@ spec:
             - name: ES2_STORAGE_SECURE
               value: {{ .Values.externalServices.storage.secure | default true | quote }}
             - name: ES2_STORAGE_SERVICE_REGION
-              value: {{ .Values.externalServices.storage.region | default "ap-seoul-1" | quote }}
+              value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+            - name: ES2_STORAGE_SERVICE_BUCKET_NAME
+              value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
             - name: ES2_LOG_LEVEL
               value: {{ .Values.es2b.logLevel | default "INFO" | quote }}
             - name: ES2_MAX_NUM_VECTORS_PER_SHARD
