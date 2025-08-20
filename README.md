@@ -59,7 +59,7 @@ enVector consists of four main microservices:
 ## 📁 Project Structure
 
 ```
-es2-deploy/
+envector-deployment/
 ├── docker-compose/          # Docker Compose deployment
 │   ├── docker-compose.yml   # Multi-service orchestration
 │   └── README.md           # Docker setup guide
@@ -83,8 +83,8 @@ Recommended for Development.
 #### Method A: Clone Repository
 ```bash
 # Clone the repository
-git clone https://github.com/CryptoLabInc/es2-deploy.git
-cd es2-deploy
+git clone https://github.com/CryptoLabInc/envector-deployment.git
+cd envector-deployment
 
 # Copy environment file
 cp .env.example .env
@@ -96,8 +96,8 @@ docker compose -f docker-compose/docker-compose.yml -p es2 up -d
 #### Method B: Direct HTTP Usage
 ```bash
 # Download and run directly from GitHub
-curl -O https://raw.githubusercontent.com/cryptolabinc/es2-deploy/main/docker-compose/docker-compose.yml
-curl -O https://raw.githubusercontent.com/cryptolabinc/es2-deploy/main/.env.example
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.yml
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/.env.example
 
 # Copy environment file
 cp .env.example .env
@@ -114,8 +114,8 @@ Recommended for production.
 #### Method A: Clone Repository
 ```bash
 # Clone the repository
-git clone https://github.com/CryptoLabInc/es2-deploy.git
-cd es2-deploy
+git clone https://github.com/CryptoLabInc/envector-deployment.git
+cd envector-deployment
 
 # Install Helm chart
 helm install es2 ./kubernetes-manifests/helm
@@ -130,7 +130,7 @@ kubectl get svc
 #### Method B: Direct HTTP Usage
 ```bash
 # Install directly from GitHub
-helm install es2 https://raw.githubusercontent.com/cryptolabinc/es2-deploy/main/kubernetes-manifests/helm
+helm install es2 https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/kubernetes-manifests/helm
 
 # Check deployment status
 kubectl get pods
