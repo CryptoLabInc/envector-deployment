@@ -90,20 +90,20 @@ cd envector-deployment
 cp .env.example .env
 
 # Start services
-docker compose -f docker-compose/docker-compose.yml -p es2 up -d
+docker compose -f docker-compose/docker-compose.yml -p envector up -d
 ```
 
 #### Method B: Direct HTTP Usage
 ```bash
 # Download and run directly from GitHub
 curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.yml
-curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/.env.example
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/.env.example
 
 # Copy environment file
 cp .env.example .env
 
 # Start services
-docker compose -f docker-compose.yml -p es2 up -d
+docker compose -f docker-compose.yml -p envector up -d
 ```
 
 
@@ -111,26 +111,14 @@ docker compose -f docker-compose.yml -p es2 up -d
 
 Recommended for production.
 
-#### Method A: Clone Repository
+#### Clone Repository
 ```bash
 # Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
 cd envector-deployment
 
 # Install Helm chart
-helm install es2 ./kubernetes-manifests/helm
-
-# Check deployment status
-kubectl get pods
-
-# Access services
-kubectl get svc
-```
-
-#### Method B: Direct HTTP Usage
-```bash
-# Install directly from GitHub
-helm install es2 https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/kubernetes-manifests/helm
+helm install envector ./kubernetes-manifests/helm
 
 # Check deployment status
 kubectl get pods

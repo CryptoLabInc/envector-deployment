@@ -20,6 +20,7 @@ externalServices:
     password: <storage_password>
     secure: true
     region: <storage_region>
+    bucket_name: <storage_bucket>
 
 imagePullSecrets: []
 # Configuration for es2e service
@@ -33,6 +34,8 @@ es2e:
     type: LoadBalancer
     port: 50050
     # nodePort: 30050 # Optionally specify a nodePort
+    # Optional pod annotations for es2e deployment
+    annotations: {}
   logLevel: INFO
 
 # Configuration for es2b service

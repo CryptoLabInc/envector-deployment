@@ -16,6 +16,10 @@ spec:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2e
+      {{- with .Values.es2e.service.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
