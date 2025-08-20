@@ -1,0 +1,89 @@
+# es2-chart/values.yaml
+
+# Global settings can be defined here
+# username is used to mimic the ${USER_NAME} variable from docker-compose
+
+# External services that this chart depends on.
+# These should be running separately.
+externalServices:
+  metadatadb:
+    host: <metadatadb_host>
+    port: <metadatadb_port>
+    user: <metadatadb_user>
+    password: <metadatadb_password>
+    database: <metadatadb_database>
+    ssl: require
+  storage:
+    host: <storage_host>
+    port: <storage_port>
+    user: <storage_user>
+    password: <storage_password>
+    secure: true
+    region: <storage_region>
+
+imagePullSecrets: []
+# Configuration for es2e service
+es2e:
+  name: es2e
+  image:
+    repository: cryptolabinc/es2e
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 50050
+    # nodePort: 30050 # Optionally specify a nodePort
+  logLevel: INFO
+
+# Configuration for es2b service
+es2b:
+  name: es2b
+  image:
+    repository: cryptolabinc/es2b
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 50051
+  logLevel: INFO
+  env:
+    shardSize: 8192
+
+# Configuration for es2s service
+es2s:
+  name: es2s
+  image:
+    repository: cryptolabinc/es2s
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 25121
+  command: []
+  env:
+    useTopk: false
+    address: "0.0.0.0"
+    threadPoolScale: 4
+    numSearchHandler: 20
+
+# Configuration for es2c service
+es2c:
+  name: es2c
+  variant: cpu
+  image:
+    repository: cryptolabinc/es2c
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 25123
+  command: []
+  replicas: 2
+  env:
+    useTopk: false
+    address: "0.0.0.0"
+    threadPoolScale: 4
+    numSearchHandler: 10
+  resources: {}
+      # limits:
+      #   nvidia.com/gpu: 1

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2c
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2c
+spec:
+  strategy:
+    type: Recreate
+  replicas: {{ .Values.es2c.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "es2-chart.fullname" . }}
+      component: es2c
+  template:
+    metadata:
+      labels:
+        app: {{ include "es2-chart.fullname" . }}
+        component: es2c
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-es2s
+          image: busybox
+          command:
+            - sh
+            - -c
+            - >-
+              until nc -z {{ include "es2-chart.fullname" . }}-es2s {{ .Values.es2s.service.port }}; do echo waiting for es2s; sleep 0.2; done
+      containers:
+        - name: es2c
+          {{- if eq .Values.es2c.variant "gpu" }}
+          image: "{{ .Values.es2c.image.repository }}:{{ .Values.es2c.image.tag | default "latest" }}-gpu"
+          {{- else }}
+          image: "{{ .Values.es2c.image.repository }}:{{ .Values.es2c.image.tag | default "latest" }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.es2c.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.es2c.service.port | default 25123 }}
+          env:
+            - name: USE_TOPK
+              value: {{ .Values.es2c.env.useTopk | default false | quote }}
+            - name: USE_GPU
+              value: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
+            - name: ES2C_PORT
+              value: {{ .Values.es2c.service.port | default 25123 | quote }}
+            - name: ES2C_ADDRESS
+              value: {{ .Values.es2c.env.address | default "0.0.0.0" | quote }}
+            - name: ES2S_ADDRESS
+              value: "{{ include "es2-chart.fullname" . }}-es2s:{{ .Values.es2s.service.port | default 25121 }}"
+            - name: THREAD_POOL_SCALE
+              value: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
+            - name: ES2S_NUM_SEARCH_HANDLER
+              value: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
+          {{- if eq .Values.es2c.variant "gpu" }}
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              cpu: "8"
+            requests:
+              cpu: "4"
+              memory: "4Gi"
+          {{- else }}
+          resources:
+            limits:
+              cpu: "4"
+            requests:
+              cpu: "2"
+              memory: "2Gi"
+          {{- end }}

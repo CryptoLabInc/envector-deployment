@@ -1,0 +1,87 @@
+# es2-chart/templates/service.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2e
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2e
+spec:
+  type: {{ .Values.es2e.service.type | default "LoadBalancer" }}
+  ports:
+    - port: {{ .Values.es2e.service.port | default 50050 }}
+      targetPort: {{ .Values.es2e.service.port | default 50050 }}
+      protocol: TCP
+      {{- if and (eq (.Values.es2e.service.type | default "LoadBalancer") "NodePort") .Values.es2e.service.nodePort }}
+      nodePort: {{ .Values.es2e.service.nodePort }}
+      {{- end }}
+  selector:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2e
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2b
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2b
+spec:
+  type: {{ .Values.es2b.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.es2b.service.port | default 50051 }}
+      targetPort: {{ .Values.es2b.service.port | default 50051 }}
+      protocol: TCP
+      {{- if eq (.Values.es2b.service.type | default "ClusterIP") "NodePort" }}
+      {{- if .Values.es2b.service.nodePort }}
+      nodePort: {{ .Values.es2b.service.nodePort }}
+      {{- end }}
+      {{- end }}
+  selector:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2b
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2s
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2s
+spec:
+  type: {{ .Values.es2s.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.es2s.service.port | default 25121 }}
+      targetPort: {{ .Values.es2s.service.port | default 25121 }}
+      protocol: TCP
+      {{- if eq (.Values.es2s.service.type | default "ClusterIP") "NodePort" }}
+      {{- if .Values.es2s.service.nodePort }}
+      nodePort: {{ .Values.es2s.service.nodePort }}
+      {{- end }}
+      {{- end }}
+  selector:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2c
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2c
+spec:
+  type: {{ .Values.es2c.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.es2c.service.port | default 25123 }}
+      targetPort: {{ .Values.es2c.service.port | default 25123 }}
+      protocol: TCP
+      {{- if eq (.Values.es2c.service.type | default "ClusterIP") "NodePort" }}
+      {{- if .Values.es2c.service.nodePort }}
+      nodePort: {{ .Values.es2c.service.nodePort }}
+      {{- end }}
+      {{- end }}
+  selector:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2c
