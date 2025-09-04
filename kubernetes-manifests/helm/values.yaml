@@ -17,6 +17,9 @@ externalServices:
     password: <metadatadb_password>
     database: <metadatadb_database>
     ssl: require
+    url: "user=<metadatadb_user> password=<metadatadb_password> host=<metadatadb_host> port=<metadatadb_port> dbname=<metadatadb_database> sslmode=require options='-c search_path=public'"
+    schema: "public"
+    useUrl: false
   storage:
     host: <storage_host>
     port: <storage_port>
@@ -26,6 +29,7 @@ externalServices:
     region: <storage_region>
     create: false
     bucket_name: <storage_bucket>
+    hasHealthcheckEndpoint: true
 
 imagePullSecrets: []
 # Configuration for es2e service

@@ -42,6 +42,10 @@ spec:
               value: {{ .Values.es2b.service.port | default 50051 | quote }}
             - name: ES2S_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2s:{{ .Values.es2s.service.port | default 25121 }}"
+            {{- if .Values.externalServices.metadatadb.useUrl }}
+            - name: ES2_DB_SERVICE_URL
+              value: {{ .Values.externalServices.metadatadb.url | quote }}
+            {{- else }}
             - name: ES2_DB_SERVICE_HOST
               value: {{ .Values.externalServices.metadatadb.host | default "localhost" | quote }}
             - name: ES2_DB_SERVICE_PORT
@@ -54,6 +58,9 @@ spec:
               value: {{ .Values.externalServices.metadatadb.database | default "mydatabase" | quote }}
             - name: ES2_DB_SERVICE_SSL
               value: {{ .Values.externalServices.metadatadb.ssl | default "require" | quote }}
+            {{- end }}
+            - name: ES2_DB_SERVICE_SCHEMA
+              value: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
             - name: ES2_STORAGE_SERVICE_ADDRESS
               value: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
             - name: ES2_STORAGE_SERVICE_USER
@@ -61,13 +68,15 @@ spec:
             - name: ES2_STORAGE_SERVICE_PASSWORD
               value: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
             - name: ES2_STORAGE_SECURE
-              value: {{ .Values.externalServices.storage.secure | default true | quote }}
+              value: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
             - name: ES2_STORAGE_SERVICE_REGION
               value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
             - name: ES2_STORAGE_SERVICE_CREATE_BUCKET
-              value: {{ .Values.externalServices.storage.create | default "false" | quote }}
+              value: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
             - name: ES2_STORAGE_BUCKET_NAME
               value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+            - name: ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT
+              value: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"true"{{ end }}
             - name: ES2_LOG_LEVEL
               value: {{ .Values.es2b.logLevel | default "INFO" | quote }}
             - name: ES2_MAX_NUM_VECTORS_PER_SHARD
