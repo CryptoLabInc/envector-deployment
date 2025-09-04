@@ -64,9 +64,15 @@ spec:
               value: {{ .Values.externalServices.storage.secure | default true | quote }}
             - name: ES2_STORAGE_SERVICE_REGION
               value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-            - name: ES2_STORAGE_SERVICE_BUCKET_NAME
+            - name: ES2_STORAGE_SERVICE_CREATE_BUCKET
+              value: {{ .Values.externalServices.storage.create | default "false" | quote }}
+            - name: ES2_STORAGE_BUCKET_NAME
               value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
             - name: ES2_LOG_LEVEL
               value: {{ .Values.es2b.logLevel | default "INFO" | quote }}
             - name: ES2_MAX_NUM_VECTORS_PER_SHARD
               value: {{ .Values.es2b.env.shardSize | default 8192 | quote }}
+          {{- if .Values.es2b.resources }}
+          resources:
+            {{- toYaml .Values.es2b.resources | nindent 12 }}
+          {{- end }}
