@@ -36,7 +36,11 @@ spec:
               value: {{ .Values.es2s.service.port | default 25121 | quote }}
             - name: ES2S_ADDRESS
               value: {{ .Values.es2s.env.address | default "0.0.0.0" | quote }}
-            - name: THREAD_POOL_SCALE
+            - name: ES2_THREAD_POOL_SCALE
               value: {{ .Values.es2s.env.threadPoolScale | default 4 | quote }}
             - name: ES2S_NUM_SEARCH_HANDLER
               value: {{ .Values.es2s.env.numSearchHandler | default 20 | quote }}
+          {{- if .Values.es2s.resources }}
+          resources:
+            {{- toYaml .Values.es2s.resources | nindent 12 }}
+          {{- end }}

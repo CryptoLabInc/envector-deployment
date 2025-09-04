@@ -3,6 +3,10 @@
 # Global settings can be defined here
 # username is used to mimic the ${USER_NAME} variable from docker-compose
 
+# Overrides for chart name and fullname
+nameOverride: ""
+fullnameOverride: ""
+
 # External services that this chart depends on.
 # These should be running separately.
 externalServices:
@@ -20,6 +24,7 @@ externalServices:
     password: <storage_password>
     secure: true
     region: <storage_region>
+    create: false
     bucket_name: <storage_bucket>
 
 imagePullSecrets: []
@@ -31,12 +36,20 @@ es2e:
     tag: latest
     pullPolicy: IfNotPresent
   service:
-    type: LoadBalancer
+    type: ClusterIP
     port: 50050
-    # nodePort: 30050 # Optionally specify a nodePort
+    # type: LoadBalancer # Enable this for direct external access without ingress
+    # nodePort: 30050 # Optionally specify a nodePort when using NodePort type
     # Optional pod annotations for es2e deployment
     annotations: {}
   logLevel: INFO
+  resources: {}
+    # limits:
+    #   cpu: "1"
+    #   memory: "2Gi"
+    # requests:
+    #   cpu: "0.5"
+    #   memory: "1Gi"
 
 # Configuration for es2b service
 es2b:
@@ -51,6 +64,13 @@ es2b:
   logLevel: INFO
   env:
     shardSize: 8192
+  resources: {}
+    # limits:
+    #   cpu: "1"
+    #   memory: "2Gi"
+    # requests:
+    #   cpu: "0.5"
+    #   memory: "1Gi"
 
 # Configuration for es2s service
 es2s:
@@ -68,6 +88,13 @@ es2s:
     address: "0.0.0.0"
     threadPoolScale: 4
     numSearchHandler: 20
+  resources: {}
+    # limits:
+    #   cpu: "1"
+    #   memory: "2Gi"
+    # requests:
+    #   cpu: "0.5"
+    #   memory: "1Gi"
 
 # Configuration for es2c service
 es2c:
@@ -87,6 +114,38 @@ es2c:
     address: "0.0.0.0"
     threadPoolScale: 4
     numSearchHandler: 10
-  resources: {}
-      # limits:
-      #   nvidia.com/gpu: 1
+  resources:
+    cpu:
+      limits:
+        cpu: "4"
+      requests:
+        cpu: "2"
+        memory: "2Gi"
+    gpu:
+      limits:
+        nvidia.com/gpu: 1
+        cpu: "8"
+      requests:
+        cpu: "4"
+        memory: "4Gi"
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: es2.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: es2e
+            port: 50050
+  tls: []
+    # - secretName: es2-tls
+    #   hosts:
+    #     - es2.local

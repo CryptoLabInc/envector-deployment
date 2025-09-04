@@ -16,10 +16,6 @@ spec:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2e
-      {{- with .Values.es2e.service.annotations }}
-      annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -62,6 +58,10 @@ spec:
               value: "{{ include "es2-chart.fullname" . }}-es2b:{{ .Values.es2b.service.port | default 50051 }}"
             - name: ES2_LOG_LEVEL
               value: {{ .Values.es2e.logLevel | default "INFO" | quote }}
+          {{- if .Values.es2e.resources }}
+          resources:
+            {{- toYaml .Values.es2e.resources | nindent 12 }}
+          {{- end }}
           readinessProbe:
             tcpSocket:
               port: {{ .Values.es2e.service.port | default 50050 }}

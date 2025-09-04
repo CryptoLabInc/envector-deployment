@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   es2e:
-    image: "cryptolabinc/es2e:${ES2E_TAG:-latest}"
+    image: "${ES2E_IMAGE_NAME:-cryptolabinc/es2e}:${ES2E_TAG:-latest}"
     container_name: es2e
     ports:
       - ${ES2E_HOST_PORT:-50050}:${ES2E_PORT:-50050}
@@ -14,7 +14,7 @@ services:
       - "es2b"
 
   es2b:
-    image: "cryptolabinc/es2b:${ES2B_TAG:-latest}"
+    image: "${ES2B_IMAGE_NAME:-cryptolabinc/es2b}:${ES2B_TAG:-latest}"
     container_name: es2b
     environment:
       - ES2B_PORT=${ES2B_PORT:-50051}
@@ -29,6 +29,7 @@ services:
       - ES2_STORAGE_SERVICE_USER=${ES2_STORAGE_SERVICE_USER:-minioadmin}
       - ES2_STORAGE_SERVICE_PASSWORD=${ES2_STORAGE_SERVICE_PASSWORD:-abcdefghi}
       - ES2_STORAGE_SECURE=${ES2_STORAGE_SECURE:-false}
+      - ES2_STORAGE_BUCKET_NAME=${ES2_STORAGE_BUCKET_NAME:-es2}
       - ES2_LOG_LEVEL=${ES2_LOG_LEVEL:-INFO}
       - ES2_MAX_NUM_VECTORS_PER_SHARD=${ES2_MAX_NUM_VECTORS_PER_SHARD:-4096}
     depends_on:
@@ -39,18 +40,18 @@ services:
 
   es2s:
     container_name: es2s
-    image: "cryptolabinc/es2s:${ES2S_TAG:-latest}"
+    image: "${ES2S_IMAGE_NAME:-cryptolabinc/es2s}:${ES2S_TAG:-latest}"
     command: []
     environment:
       - USE_TOPK=false
       - ES2S_PORT=${ES2S_PORT:-25121}
       - ES2S_ADDRESS=${ES2S_ADDRESS:-0.0.0.0}
-      - THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
+      - ES2_THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
       - ES2S_NUM_SEARCH_HANDLER=${ES2S_NUM_SEARCH_HANDLER:-20}
 
   es2c:
     container_name: es2c
-    image: "cryptolabinc/es2c:${ES2C_TAG:-latest}"
+    image: "${ES2C_IMAGE_NAME:-cryptolabinc/es2c}:${ES2C_TAG:-latest}"
     command: []
 
     environment:
@@ -59,14 +60,14 @@ services:
       - ES2C_PORT=${ES2C_PORT:-25123}
       - ES2C_ADDRESS=${ES2C_ADDRESS:-0.0.0.0}
       - ES2S_ADDRESS=es2s:${ES2S_PORT:-25121}
-      - THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
-      - ES2S_NUM_SEARCH_HANDLER=${ES2C_NUM_SEARCH_HANDLER:-10}
+      - ES2_THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
+      - ES2C_NUM_SEARCH_HANDLER=${ES2C_NUM_SEARCH_HANDLER:-10}
 
     depends_on:
       - "es2s"
 
   metadatadb:
-    image: postgres:14
+    image: postgres:14.9
     container_name: es2-postgres
     restart: always
     command: ["postgres", "-c", "max_wal_size=8GB", "-c", "checkpoint_timeout=1min"]

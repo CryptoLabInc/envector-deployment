@@ -7,13 +7,17 @@ metadata:
   labels:
     app: {{ include "es2-chart.fullname" . }}
     component: es2e
+{{- with .Values.es2e.service.annotations }}
+  annotations:
+  {{- toYaml . | nindent 4 }}
+{{- end }}
 spec:
-  type: {{ .Values.es2e.service.type | default "LoadBalancer" }}
+  type: {{ .Values.es2e.service.type | default "ClusterIP" }}
   ports:
     - port: {{ .Values.es2e.service.port | default 50050 }}
       targetPort: {{ .Values.es2e.service.port | default 50050 }}
       protocol: TCP
-      {{- if and (eq (.Values.es2e.service.type | default "LoadBalancer") "NodePort") .Values.es2e.service.nodePort }}
+      {{- if and (eq (.Values.es2e.service.type | default "ClusterIP") "NodePort") .Values.es2e.service.nodePort }}
       nodePort: {{ .Values.es2e.service.nodePort }}
       {{- end }}
   selector:

@@ -54,23 +54,18 @@ spec:
               value: {{ .Values.es2c.env.address | default "0.0.0.0" | quote }}
             - name: ES2S_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2s:{{ .Values.es2s.service.port | default 25121 }}"
-            - name: THREAD_POOL_SCALE
+            - name: ES2_THREAD_POOL_SCALE
               value: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
-            - name: ES2S_NUM_SEARCH_HANDLER
+            - name: ES2C_NUM_SEARCH_HANDLER
               value: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
           {{- if eq .Values.es2c.variant "gpu" }}
+          {{- if .Values.es2c.resources.gpu }}
           resources:
-            limits:
-              nvidia.com/gpu: 1
-              cpu: "8"
-            requests:
-              cpu: "4"
-              memory: "4Gi"
+            {{- toYaml .Values.es2c.resources.gpu | nindent 12 }}
+          {{- end }}
           {{- else }}
+          {{- if .Values.es2c.resources.cpu }}
           resources:
-            limits:
-              cpu: "4"
-            requests:
-              cpu: "2"
-              memory: "2Gi"
+            {{- toYaml .Values.es2c.resources.cpu | nindent 12 }}
+          {{- end }}
           {{- end }}
