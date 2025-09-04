@@ -197,16 +197,16 @@ cipher = Cipher(dim=512, enc_key_path="./keys/my_key/EncKey.bin")
 
 ## 📄 License
 
-This project is proprietary software. For licensing information, please contact [heaan](hello@heaan.com).
+This project is proprietary software. For licensing information, please contact [heaan](mailto:hello@heaan.com).
 
 ## 🤝 Contributing
 
-This is a proprietary software project. For contribution inquiries, please contact [heaan](hello@heaan.com).
+This is a proprietary software project. For contribution inquiries, please contact [heaan](mailto:hello@heaan.com).
 
 ## 📞 Support
 
 - **Product Information**: [enVector at heaan](https://heaan.com)
-- **Technical Support**: Please contact [heaan](es2.support@heaan.com)
+- **Technical Support**: Please contact [heaan](mailto:es2.support@heaan.com)
 
 ## 🔗 Related Links
 
