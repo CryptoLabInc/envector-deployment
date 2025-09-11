@@ -48,8 +48,8 @@ enVector consists of four main microservices:
 
 - **es2e (Endpoint)**: Main API gateway and client interface
 - **es2b (Backend)**: Service orchestration and metadata management
-- **es2s (Search)**: Vector search engine and similarity computation
-- **es2c (Compute)**: Vector operations and mathematical computations
+- **es2s (Scheduler)**: Manages and schedules compute requests
+- **es2c (Compute)**: Executes vector search and similarity computations
 
 ### Infrastructure Dependencies
 
