@@ -26,13 +26,13 @@ spec:
         {{- end }}
       {{- end }}
       initContainers:
-        - name: wait-for-es2s
+        - name: wait-for-es2o
           image: busybox
           command:
             - sh
             - -c
             - >-
-              until nc -z {{ include "es2-chart.fullname" . }}-es2s {{ .Values.es2s.service.port }}; do echo waiting for es2s; sleep 0.2; done
+              until nc -z {{ include "es2-chart.fullname" . }}-es2o {{ .Values.es2o.service.port }}; do echo waiting for es2o; sleep 0.2; done
       containers:
         - name: es2c
           {{- if eq .Values.es2c.variant "gpu" }}
@@ -50,10 +50,10 @@ spec:
               value: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
             - name: ES2C_PORT
               value: {{ .Values.es2c.service.port | default 25123 | quote }}
-            - name: ES2C_ADDRESS
-              value: {{ .Values.es2c.env.address | default "0.0.0.0" | quote }}
-            - name: ES2S_ADDRESS
-              value: "{{ include "es2-chart.fullname" . }}-es2s:{{ .Values.es2s.service.port | default 25121 }}"
+            - name: ES2C_HOST
+              value: {{ .Values.es2c.env.host | default "0.0.0.0" | quote }}
+            - name: ES2O_ADDRESS
+              value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
             - name: ES2_THREAD_POOL_SCALE
               value: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
             - name: ES2C_NUM_SEARCH_HANDLER

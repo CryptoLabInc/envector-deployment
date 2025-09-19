@@ -18,7 +18,7 @@ services:
     container_name: es2b
     environment:
       - ES2B_PORT=${ES2B_PORT:-50051}
-      - ES2S_ADDRESS=es2s:${ES2S_PORT:-25121}
+      - ES2O_ADDRESS=es2o:${ES2O_PORT:-25121}
       - ES2_DB_SERVICE_HOST=metadatadb
       - ES2_DB_SERVICE_PORT=${ES2_DB_SERVICE_PORT:-5432}
       - ES2_DB_SERVICE_USER=${ES2_DB_SERVICE_USER:-postgres}
@@ -38,16 +38,20 @@ services:
       metadatadb:
         condition: service_started
 
-  es2s:
-    container_name: es2s
-    image: "${ES2S_IMAGE_NAME:-cryptolabinc/es2s}:${ES2S_TAG:-latest}"
+  es2o:
+    container_name: es2o
+    image: "${ES2O_IMAGE_NAME:-cryptolabinc/es2o}:${ES2O_TAG:-latest}"
     command: []
     environment:
-      - USE_TOPK=false
-      - ES2S_PORT=${ES2S_PORT:-25121}
-      - ES2S_ADDRESS=${ES2S_ADDRESS:-0.0.0.0}
-      - ES2_THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
-      - ES2S_NUM_SEARCH_HANDLER=${ES2S_NUM_SEARCH_HANDLER:-20}
+      - ES2O_PORT=${ES2O_PORT:-25121}
+      # Orchestrator DB
+      - ES2O_DB_URL=postgresql://${ES2_DB_SERVICE_USER:-myuser}:${ES2_DB_SERVICE_PASSWORD:-.}@metadatadb:${ES2_DB_SERVICE_PORT:-5432}/${ES2_DB_SERVICE_NAME:-mydatabase}?sslmode=${ES2_DB_SERVICE_SSL:-disable}
+      # Orchestrator Storage
+      - ES2O_STG_ENDPOINT=storage:${ES2_STORAGE_SERVICE_PORT:-59000}
+      - ES2O_STG_ACCESS_KEY=${ES2_STORAGE_SERVICE_USER:-minioadmin}
+      - ES2O_STG_SECRET_KEY=${ES2_STORAGE_SERVICE_PASSWORD:-.}
+      - ES2O_STG_SECURE=${ES2_STORAGE_SECURE:-false}
+      - ES2O_STG_BUCKETNAME=${ES2_STORAGE_BUCKET_NAME:-es2}
 
   es2c:
     container_name: es2c
@@ -58,13 +62,13 @@ services:
       - USE_TOPK=false
       - USE_GPU=false
       - ES2C_PORT=${ES2C_PORT:-25123}
-      - ES2C_ADDRESS=${ES2C_ADDRESS:-0.0.0.0}
-      - ES2S_ADDRESS=es2s:${ES2S_PORT:-25121}
+      - ES2C_HOST=${ES2C_HOST:-0.0.0.0}
+      - ES2O_ADDRESS=es2o:${ES2O_PORT:-25121}
       - ES2_THREAD_POOL_SCALE=${ES2_THREAD_POOL_SCALE:-4}
       - ES2C_NUM_SEARCH_HANDLER=${ES2C_NUM_SEARCH_HANDLER:-10}
 
     depends_on:
-      - "es2s"
+      - "es2o"
 
   metadatadb:
     image: postgres:14.9

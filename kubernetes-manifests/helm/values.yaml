@@ -11,15 +11,8 @@ fullnameOverride: ""
 # These should be running separately.
 externalServices:
   metadatadb:
-    host: <metadatadb_host>
-    port: <metadatadb_port>
-    user: <metadatadb_user>
-    password: <metadatadb_password>
-    database: <metadatadb_database>
-    ssl: require
     url: "user=<metadatadb_user> password=<metadatadb_password> host=<metadatadb_host> port=<metadatadb_port> dbname=<metadatadb_database> sslmode=require options='-c search_path=public'"
     schema: "public"
-    useUrl: false
   storage:
     host: <storage_host>
     port: <storage_port>
@@ -29,7 +22,7 @@ externalServices:
     region: <storage_region>
     create: false
     bucket_name: <storage_bucket>
-    hasHealthcheckEndpoint: true
+    hasHealthcheckEndpoint: false # Only for Minio.
 
 imagePullSecrets: []
 # Configuration for es2e service
@@ -76,22 +69,17 @@ es2b:
     #   cpu: "0.5"
     #   memory: "1Gi"
 
-# Configuration for es2s service
-es2s:
-  name: es2s
+# Configuration for es2o service
+es2o:
+  name: es2o
   image:
-    repository: cryptolabinc/es2s
+    repository: cryptolabinc/es2o
     tag: latest
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 25121
   command: []
-  env:
-    useTopk: false
-    address: "0.0.0.0"
-    threadPoolScale: 4
-    numSearchHandler: 20
   resources: {}
     # limits:
     #   cpu: "1"
@@ -115,7 +103,7 @@ es2c:
   replicas: 2
   env:
     useTopk: false
-    address: "0.0.0.0"
+    host: "0.0.0.0"
     threadPoolScale: 4
     numSearchHandler: 10
   resources:

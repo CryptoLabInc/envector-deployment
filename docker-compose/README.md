@@ -5,7 +5,7 @@
 ```text
 es2e:     cryptolabinc/es2e:latest 
 es2b:     cryptolabinc/es2b:latest  
-es2s:     cryptolabinc/es2s:latest  
+es2o:     cryptolabinc/es2o:latest
 es2c:     cryptolabinc/es2c:latest  
 postgres: postgres:14  
 minio:    minio/minio:RELEASE.2023-03-20T20-16-18Z  

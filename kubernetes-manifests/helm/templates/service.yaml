@@ -49,24 +49,24 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2s
+  name: {{ include "es2-chart.fullname" . }}-es2o
   labels:
     app: {{ include "es2-chart.fullname" . }}
-    component: es2s
+    component: es2o
 spec:
-  type: {{ .Values.es2s.service.type | default "ClusterIP" }}
+  type: {{ .Values.es2o.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.es2s.service.port | default 25121 }}
-      targetPort: {{ .Values.es2s.service.port | default 25121 }}
+    - port: {{ .Values.es2o.service.port | default 25121 }}
+      targetPort: {{ .Values.es2o.service.port | default 25121 }}
       protocol: TCP
-      {{- if eq (.Values.es2s.service.type | default "ClusterIP") "NodePort" }}
-      {{- if .Values.es2s.service.nodePort }}
-      nodePort: {{ .Values.es2s.service.nodePort }}
+      {{- if eq (.Values.es2o.service.type | default "ClusterIP") "NodePort" }}
+      {{- if .Values.es2o.service.nodePort }}
+      nodePort: {{ .Values.es2o.service.nodePort }}
       {{- end }}
       {{- end }}
   selector:
     app: {{ include "es2-chart.fullname" . }}
-    component: es2s
+    component: es2o
 ---
 apiVersion: v1
 kind: Service

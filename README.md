@@ -48,8 +48,8 @@ enVector consists of four main microservices:
 
 - **es2e (Endpoint)**: Main API gateway and client interface
 - **es2b (Backend)**: Service orchestration and metadata management
-- **es2s (Search)**: Vector search engine and similarity computation
-- **es2c (Compute)**: Vector operations and mathematical computations
+- **es2o (Orchestrator)**: Manages and schedules compute requests
+- **es2c (Compute)**: Executes vector search and similarity computations
 
 ### Infrastructure Dependencies
 
@@ -135,7 +135,7 @@ kubectl get svc
 |----------|-------------|---------|
 | `ES2E_TAG` | es2e service image tag | `latest` |
 | `ES2B_TAG` | es2b service image tag | `latest` |
-| `ES2S_TAG` | es2s service image tag | `latest` |
+| `ES2O_TAG` | es2o service image tag | `latest` |
 | `ES2C_TAG` | es2c service image tag | `latest` |
 | `ES2_LOG_LEVEL` | Logging level | `INFO` |
 | `ES2E_HOST_PORT` | es2e external port | `50050` |
@@ -154,7 +154,7 @@ Edit `kubernetes-manifests/helm/values.yaml` to customize:
 * OS: Linux/macOS 11.0+
 
 ```bash
-pip install es2
+pip install es2==1.1.0rc1
 ```
 
 ### Basic Setup

@@ -32,5 +32,5 @@ kubectl logs <pod-name>
 
 ## Notes
 - es2b waits for external DB/Storage to be reachable before starting.
-- es2c waits for es2s to be ready before starting.
-- es2e waits for es2b, es2s, and es2c to be ready before starting.
+- es2c waits for es2o to be ready before starting.
+- es2e waits for es2b, es2o, and es2c to be ready before starting.

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2o
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2o
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "es2-chart.fullname" . }}
+      component: es2o
+  template:
+    metadata:
+      labels:
+        app: {{ include "es2-chart.fullname" . }}
+        component: es2o
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: es2o
+          image: "{{ .Values.es2o.image.repository }}:{{ .Values.es2o.image.tag }}"
+          imagePullPolicy: {{ .Values.es2o.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.es2o.service.port | default 25121 }}
+          env:
+            - name: ES2O_PORT
+              value: {{ .Values.es2o.service.port | default 25121 | quote }}
+            - name: ES2O_DB_URL
+              value: {{ .Values.externalServices.metadatadb.url | quote }}
+            - name: ES2O_STG_ENDPOINT
+              value: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
+            - name: ES2O_STG_ACCESS_KEY
+              value: {{ .Values.externalServices.storage.user | default "minioadmin" | quote }}
+            - name: ES2O_STG_SECRET_KEY
+              value: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
+            - name: ES2O_STG_SECURE
+              value: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+            - name: ES2O_STG_REGION
+              value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+            - name: ES2O_STG_BUCKETNAME
+              value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+          {{- if .Values.es2o.resources }}
+          resources:
+            {{- toYaml .Values.es2o.resources | nindent 12 }}
+          {{- end }}

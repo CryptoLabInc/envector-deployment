@@ -40,25 +40,10 @@ spec:
           env:
             - name: ES2B_PORT
               value: {{ .Values.es2b.service.port | default 50051 | quote }}
-            - name: ES2S_ADDRESS
-              value: "{{ include "es2-chart.fullname" . }}-es2s:{{ .Values.es2s.service.port | default 25121 }}"
-            {{- if .Values.externalServices.metadatadb.useUrl }}
+            - name: ES2O_ADDRESS
+              value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
             - name: ES2_DB_SERVICE_URL
               value: {{ .Values.externalServices.metadatadb.url | quote }}
-            {{- else }}
-            - name: ES2_DB_SERVICE_HOST
-              value: {{ .Values.externalServices.metadatadb.host | default "localhost" | quote }}
-            - name: ES2_DB_SERVICE_PORT
-              value: {{ .Values.externalServices.metadatadb.port | default 5432 | quote }}
-            - name: ES2_DB_SERVICE_USER
-              value: {{ .Values.externalServices.metadatadb.user | default "postgres" | quote }}
-            - name: ES2_DB_SERVICE_PASSWORD
-              value: {{ .Values.externalServices.metadatadb.password | default "password" | quote }}
-            - name: ES2_DB_SERVICE_NAME
-              value: {{ .Values.externalServices.metadatadb.database | default "mydatabase" | quote }}
-            - name: ES2_DB_SERVICE_SSL
-              value: {{ .Values.externalServices.metadatadb.ssl | default "require" | quote }}
-            {{- end }}
             - name: ES2_DB_SERVICE_SCHEMA
               value: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
             - name: ES2_STORAGE_SERVICE_ADDRESS

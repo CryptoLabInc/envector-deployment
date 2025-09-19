@@ -31,13 +31,13 @@ spec:
             - -c
             - >-
               until nc -z {{ include "es2-chart.fullname" . }}-es2b {{ .Values.es2b.service.port }}; do echo waiting for es2b; sleep 2; done
-        - name: wait-for-es2s
+        - name: wait-for-es2o
           image: busybox
           command:
             - sh
             - -c
             - >-
-              until nc -z {{ include "es2-chart.fullname" . }}-es2s {{ .Values.es2s.service.port }}; do echo waiting for es2s; sleep 2; done
+              until nc -z {{ include "es2-chart.fullname" . }}-es2o {{ .Values.es2o.service.port }}; do echo waiting for es2o; sleep 2; done
         - name: wait-for-es2c
           image: busybox
           command:
