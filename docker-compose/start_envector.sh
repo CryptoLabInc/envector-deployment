@@ -10,6 +10,7 @@ Usage: ./start_envector.sh [options]
 Options:
   --gpu                  Include docker-compose.gpu.yml
   --env-file FILE        Env file path (default: ./.env)
+  --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
   --num-es2c N           Number of compute workers (CPU: scales es2c, GPU: enables up to N GPUs)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
@@ -23,22 +24,29 @@ Examples (run from this directory):
   ./start_envector.sh --gpu --set ES2E_HOST_PORT=50055 --set VERSION_TAG=dev
   ./start_envector.sh --num-es2c 4
   ./start_envector.sh --down
+  ./start_envector.sh --config
+
+Notes:
+- Relative paths for --env-file and --log-file are resolved from the current working directory (pwd), not the compose folder.
+- --config prints the fully-resolved docker compose configuration and does not start containers.
 EOF
 }
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 COMPOSE_DIR="${script_dir}"
+ORIG_PWD="$(pwd)"
 
 # Defaults
 GPU=false
-ENV_FILE="${COMPOSE_DIR}/.env"
+ENV_FILE="${ORIG_PWD}/.env"
 PROJECT=""
 DOWN=false
 DRY_RUN=false
-LOG_FILE="${COMPOSE_DIR}/docker-logs.log"
+LOG_FILE="${ORIG_PWD}/docker-logs.log"
 NUM_ES2C=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
+CONFIG_MODE=false
 
 while (($#)); do
   case "$1" in
@@ -47,6 +55,8 @@ while (($#)); do
     --env-file)
       [[ $# -ge 2 ]] || { echo "--env-file requires a value" >&2; exit 1; }
       ENV_FILE="$2"; shift 2 ;;
+    --config)
+      CONFIG_MODE=true; shift ;;
     -p|--project)
       [[ $# -ge 2 ]] || { echo "--project requires a value" >&2; exit 1; }
       PROJECT="$2"; shift 2 ;;
@@ -85,6 +95,14 @@ if [[ ! -d "$COMPOSE_DIR" ]]; then
   exit 1
 fi
 
+# Normalize paths: resolve relative --env-file/--log-file against the caller's working directory
+if [[ -n "${ENV_FILE:-}" && "${ENV_FILE}" != /* ]]; then
+  ENV_FILE="${ORIG_PWD}/${ENV_FILE}"
+fi
+if [[ -n "${LOG_FILE:-}" && "${LOG_FILE}" != /* ]]; then
+  LOG_FILE="${ORIG_PWD}/${LOG_FILE}"
+fi
+
 # Ensure env file exists; if missing, copy from .env.example when available
 if [[ ! -f "$ENV_FILE" ]]; then
   if [[ -f "$COMPOSE_DIR/.env.example" ]]; then
@@ -108,6 +126,8 @@ fi
 
 compose_args+=( -f docker-compose.infra.yml )
 
+# No additional compose files beyond the standard set above
+
 pushd "$COMPOSE_DIR" >/dev/null
 
 cmd=( docker compose "${compose_args[@]}" --env-file "$ENV_FILE" )
@@ -119,15 +139,22 @@ fi
 if "$GPU"; then
   # GPU: base es2c uses GPU0; additional GPUs are enabled via profiles gpu1..gpu3
   # Support up to 4 GPUs by default
-  if (( NUM_ES2C > 1 )); then
-    max_extra=$(( NUM_ES2C - 1 ))
-    if (( max_extra > 3 )); then
-      echo "Requested --num-es2c=$NUM_ES2C exceeds default GPU services (max 4). Enabling 4. Update compose files to extend." >&2
-      max_extra=3
-    fi
-    for i in $(seq 1 "$max_extra"); do
+  if "$DOWN"; then
+    # When tearing down, include all known GPU profiles so all GPU containers are removed
+    for i in 1 2 3; do
       cmd+=( --profile "gpu${i}" )
     done
+  else
+    if (( NUM_ES2C > 1 )); then
+      max_extra=$(( NUM_ES2C - 1 ))
+      if (( max_extra > 3 )); then
+        echo "Requested --num-es2c=$NUM_ES2C exceeds default GPU services (max 4). Enabling 4. Update compose files to extend." >&2
+        max_extra=3
+      fi
+      for i in $(seq 1 "$max_extra"); do
+        cmd+=( --profile "gpu${i}" )
+      done
+    fi
   fi
 fi
 
@@ -138,6 +165,9 @@ if "$DOWN"; then
   if "$DOWN_VOLUMES"; then
     cmd+=( -v )
   fi
+elif "$CONFIG_MODE"; then
+  # Print merged config only
+  cmd+=( config )
 else
   # For up, place service-specific flags like --scale after the subcommand
   cmd+=( up -d )
@@ -167,9 +197,11 @@ fi
   "${cmd[@]}"
 )
 
-# After successful up, start background log tail if not DOWN
-if ! "$DOWN"; then
+# After successful up, start background log tail (skip for down/config)
+if ! "$DOWN" && ! "$CONFIG_MODE"; then
   mkdir -p "$(dirname "$LOG_FILE")"
+  # Truncate log file on each start to avoid appending to old logs
+  : > "$LOG_FILE"
   # Build a fresh logs command mirroring compose args and project/profiles
   log_cmd=( docker compose "${compose_args[@]}" --env-file "$ENV_FILE" )
   if [[ -n "$PROJECT" ]]; then
@@ -188,7 +220,7 @@ if ! "$DOWN"; then
     for kv in "${ENV_OVERRIDES[@]}"; do
       export "$kv"
     done
-    "${log_cmd[@]}" logs -f >>"$LOG_FILE" 2>&1 &
+    "${log_cmd[@]}" logs -f >"$LOG_FILE" 2>&1 &
   )
   echo "Logging to: $LOG_FILE"
 fi

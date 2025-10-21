@@ -27,7 +27,7 @@
 
 ## 📊 Performance
 
-- **Vector Dimensions**: Support for 16-4096 dimensional vectors
+- **Vector Dimensions**: Support for 32-4096 dimensional vectors
 - **Search Speed**: Optimized encrtyped similarity search algorithms
 - **Scalability**: Horizontal scaling with Kubernetes
 - **GPU Support**: Optional GPU acceleration for encrypted vector search

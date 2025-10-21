@@ -56,6 +56,9 @@ Recommended (helper script in this directory):
 # Baseline: application + infrastructure
 ./start_envector.sh
 
+# Print merged compose config (no containers started)
+./start_envector.sh --config
+
 # GPU override (requires NVIDIA Container Toolkit)
 ./start_envector.sh --gpu
 
