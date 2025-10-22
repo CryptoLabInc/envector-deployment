@@ -59,14 +59,14 @@ services:
     # License file mount (optional). Uncomment to provide license via file.
     # volumes:
     #   - ./token.jwt:/es2/license/token.jwt
-    deploy:
-      resources:
-        limits:
-          cpus: '16.0'
-          memory: 32G
-        reservations:
-          cpus: '8.0'
-          memory: 16G
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '16.0'
+    #       memory: 32G
+    #     reservations:
+    #       cpus: '8.0'
+    #       memory: 16G
     depends_on:
       - "es2o"
 

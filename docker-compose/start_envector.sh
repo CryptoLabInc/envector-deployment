@@ -191,9 +191,11 @@ fi
 # Execute with inline env overrides in a subshell
 (
   set -euo pipefail
-  for kv in "${ENV_OVERRIDES[@]}"; do
-    export "$kv"
-  done
+  if ((${#ENV_OVERRIDES[@]})); then
+    for kv in "${ENV_OVERRIDES[@]}"; do
+      export "$kv"
+    done
+  fi
   "${cmd[@]}"
 )
 
@@ -217,9 +219,11 @@ if ! "$DOWN" && ! "$CONFIG_MODE"; then
   # Run logs -f in background with same env overrides
   (
     set -euo pipefail
-    for kv in "${ENV_OVERRIDES[@]}"; do
-      export "$kv"
-    done
+    if ((${#ENV_OVERRIDES[@]})); then
+      for kv in "${ENV_OVERRIDES[@]}"; do
+        export "$kv"
+      done
+    fi
     "${log_cmd[@]}" logs -f >"$LOG_FILE" 2>&1 &
   )
   echo "Logging to: $LOG_FILE"
