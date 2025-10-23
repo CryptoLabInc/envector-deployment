@@ -60,16 +60,20 @@ enVector consists of four main microservices:
 
 ```
 envector-deployment/
-├── docker-compose/          # Docker Compose deployment
-│   ├── docker-compose.yml   # Multi-service orchestration
-│   └── README.md           # Docker setup guide
-├── kubernetes-manifests/    # Kubernetes deployment
-│   ├── helm/               # Helm chart for K8s
-│   │   ├── Chart.yaml      # Chart metadata
-│   │   ├── values.yaml     # Configurable values
-│   │   └── templates/      # K8s manifest templates
-│   └── README.md           # K8s deployment guide
-└── notebooks/              # Python SDK examples    
+├── docker-compose/                  # Docker Compose deployment
+│   ├── docker-compose.envector.yml  # Core application services
+│   ├── docker-compose.infra.yml     # Postgres + MinIO (adds readiness deps to core)
+│   ├── docker-compose.gpu.yml       # GPU override for es2c
+│   ├── .env.example                 # environment variables for es2
+│   ├── start_envector.sh            # easy-to-use helper script
+│   └── README.md                    # Docker setup guide
+├── kubernetes-manifests/            # Kubernetes deployment
+│   ├── helm/                        # Helm chart for K8s
+│   │   ├── Chart.yaml               # Chart metadata
+│   │   ├── values.yaml              # Configurable values
+│   │   └── templates/               # K8s manifest templates
+│   └── README.md                    # K8s deployment guide
+└── notebooks/                       # Python SDK examples
 ```
 
 ## 🚀 Quick Start
@@ -78,32 +82,34 @@ envector-deployment/
 
 ### Option 1: Docker Compose
 
-Recommended for Development.
+Recommended for Development. See more details in [docker-compose README](docker-compose/README.md).
 
 #### Method A: Clone Repository
 ```bash
 # Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
-cd envector-deployment
+cd envector-deployment/docker-compose
 
 # Copy environment file
 cp .env.example .env
 
 # Start services
-docker compose -f docker-compose/docker-compose.yml -p envector up -d
+./start_envector.sh
+# OR docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml -p envector up -d
 ```
 
 #### Method B: Direct HTTP Usage
 ```bash
 # Download and run directly from GitHub
-curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.yml
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.envector.yml
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.infra.yml
 curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/.env.example
 
 # Copy environment file
 cp .env.example .env
 
 # Start services
-docker compose -f docker-compose.yml -p envector up -d
+docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml -p envector up -d
 ```
 
 
@@ -154,7 +160,7 @@ Edit `kubernetes-manifests/helm/values.yaml` to customize:
 * OS: Linux/macOS 11.0+
 
 ```bash
-pip install es2==1.1.0rc1
+pip install es2
 ```
 
 ### Basic Setup
