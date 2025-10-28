@@ -31,10 +31,12 @@ spec:
         app: {{ include "es2-chart.fullname" . }}
         component: es2c
       annotations:
+        {{- if .Values.es2c.license.enabled }}
         # Rollout when license Secret manifest changes (created/updated by this chart)
         checksum/es2c-license: {{ include (print $.Template.BasePath "/es2c-license-secret.yaml") . | sha256sum }}
+        {{- end }}
         # Optional manual trigger when using an external Secret
-        {{- if .Values.es2c.license.existingSecret }}
+        {{- if and .Values.es2c.license.enabled .Values.es2c.license.existingSecret }}
         checksum/external-es2c-license: {{ .Values.es2c.license.secret.checksum | default "" | quote }}
         {{- end }}
     spec:
