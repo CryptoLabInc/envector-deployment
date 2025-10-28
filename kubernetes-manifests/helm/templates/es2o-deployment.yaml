@@ -1,21 +1,53 @@
+# Headless service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2o{{ .Values.es2o.service.headlessSuffix }}
+spec:
+  clusterIP: None # Headless service
+  ports:
+    - port: {{ .Values.es2o.service.port | default 25121 }}
+  selector:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2o
+---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "es2-chart.fullname" . }}-es2o
   labels:
     app: {{ include "es2-chart.fullname" . }}
     component: es2o
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.es2o.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
-  replicas: 1
+  serviceName: {{ include "es2-chart.fullname" . }}-es2o{{ .Values.es2o.service.headlessSuffix }}
+  replicas: {{ .Values.es2o.replicas | default 1 }}
   selector:
     matchLabels:
       app: {{ include "es2-chart.fullname" . }}
       component: es2o
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.es2o.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
   template:
     metadata:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2o
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.es2o.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -23,29 +55,55 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      {{- if .Values.es2o.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.es2o.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2o.affinity }}
+      affinity:
+        {{- toYaml .Values.es2o.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2o.tolerations }}
+      tolerations:
+        {{- toYaml .Values.es2o.tolerations | nindent 8 }}
+      {{- end }}
       containers:
         - name: es2o
           image: "{{ .Values.es2o.image.repository }}:{{ .Values.es2o.image.tag }}"
           imagePullPolicy: {{ .Values.es2o.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.es2o.service.port | default 25121 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "es2-chart.fullname" . }}-es2o-config
           env:
             - name: ES2O_PORT
               value: {{ .Values.es2o.service.port | default 25121 | quote }}
-            - name: ES2O_DB_URL
-              value: {{ .Values.externalServices.metadatadb.url | quote }}
-            - name: ES2O_STG_ENDPOINT
-              value: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
-            - name: ES2O_STG_ACCESS_KEY
-              value: {{ .Values.externalServices.storage.user | default "minioadmin" | quote }}
-            - name: ES2O_STG_SECRET_KEY
-              value: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
-            - name: ES2O_STG_SECURE
-              value: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-            - name: ES2O_STG_REGION
-              value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-            - name: ES2O_STG_BUCKETNAME
-              value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+            {{- if .Values.externalSecrets.enabled }}
+            {{- $defaultAppSecretName := printf "%s-eso" (include "es2-chart.fullname" .) -}}
+            {{- $appSecretName := (default $defaultAppSecretName .Values.externalSecrets.appSecret.name) -}}
+            - name: ES2_DB_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_DB_SERVICE_URL
+            - name: ES2_STORAGE_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_STORAGE_SERVICE_USER
+            - name: ES2_STORAGE_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_STORAGE_SERVICE_PASSWORD
+            {{- end }}
+            - name: ES2O_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name # "es2o-0", "es2o-1", ...
+            - name: ES2O_KUBE_SERVICE
+              value: {{ include "es2-chart.fullname" . }}-es2o{{ .Values.es2o.service.headlessSuffix }}
           {{- if .Values.es2o.resources }}
           resources:
             {{- toYaml .Values.es2o.resources | nindent 12 }}

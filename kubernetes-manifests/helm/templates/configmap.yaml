@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2e-config
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2e
+data:
+  ES2_LOG_LEVEL: {{ .Values.es2e.logLevel | default "INFO" | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2b-config
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2b
+data:
+  {{- if not .Values.externalSecrets.enabled }}
+  ES2_DB_SERVICE_URL: {{ .Values.externalServices.metadatadb.url | quote }}
+  {{- end }}
+  ES2_DB_SERVICE_SCHEMA: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
+  ES2_STORAGE_SERVICE_ADDRESS: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
+  {{- if not .Values.externalSecrets.enabled }}
+  ES2_STORAGE_SERVICE_USER: {{ .Values.externalServices.storage.user | default "minioadmin" | quote }}
+  ES2_STORAGE_SERVICE_PASSWORD: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
+  {{- end }}
+  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  ES2_STORAGE_SERVICE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
+  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"true"{{ end }}
+  ES2_LOG_LEVEL: {{ .Values.es2b.logLevel | default "INFO" | quote }}
+  ES2_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.es2b.env.shardSize | default 4096 | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2o-config
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2o
+data:
+  {{- if not .Values.externalSecrets.enabled }}
+  ES2_DB_SERVICE_URL: {{ .Values.externalServices.metadatadb.url | quote }}
+  {{- end }}
+  ES2_STORAGE_SERVICE_ADDRESS: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
+  {{- if not .Values.externalSecrets.enabled }}
+  ES2_STORAGE_SERVICE_USER: {{ .Values.externalServices.storage.user | default "minioadmin" | quote }}
+  ES2_STORAGE_SERVICE_PASSWORD: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
+  {{- end }}
+  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+  ES2_LOG_LEVEL: {{ .Values.es2o.logLevel | default "INFO" | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "es2-chart.fullname" . }}-es2c-config
+  labels:
+    app: {{ include "es2-chart.fullname" . }}
+    component: es2c
+data:
+  USE_TOPK: {{ .Values.es2c.env.useTopk | default false | quote }}
+  USE_GPU: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
+  ES2_THREAD_POOL_SCALE: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
+  ES2C_NUM_SEARCH_HANDLER: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
+  {{- if .Values.es2c.license.enabled }}
+  ES2_LICENSE_TOKEN: {{ .Values.es2c.license.tokenPath | default "/es2/license/token.jwt" | quote }}
+  {{- end }}

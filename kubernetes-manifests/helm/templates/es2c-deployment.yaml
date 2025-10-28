@@ -5,6 +5,12 @@ metadata:
   labels:
     app: {{ include "es2-chart.fullname" . }}
     component: es2c
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.es2c.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   strategy:
     type: Recreate
@@ -13,11 +19,24 @@ spec:
     matchLabels:
       app: {{ include "es2-chart.fullname" . }}
       component: es2c
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.es2c.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
   template:
     metadata:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2c
+      annotations:
+        # Rollout when license Secret manifest changes (created/updated by this chart)
+        checksum/es2c-license: {{ include (print $.Template.BasePath "/es2c-license-secret.yaml") . | sha256sum }}
+        # Optional manual trigger when using an external Secret
+        {{- if .Values.es2c.license.existingSecret }}
+        checksum/external-es2c-license: {{ .Values.es2c.license.secret.checksum | default "" | quote }}
+        {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -25,47 +44,63 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      initContainers:
-        - name: wait-for-es2o
-          image: busybox
-          command:
-            - sh
-            - -c
-            - >-
-              until nc -z {{ include "es2-chart.fullname" . }}-es2o {{ .Values.es2o.service.port }}; do echo waiting for es2o; sleep 0.2; done
+      {{- if .Values.es2c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.es2c.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2c.affinity }}
+      affinity:
+        {{- toYaml .Values.es2c.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2c.tolerations }}
+      tolerations:
+        {{- toYaml .Values.es2c.tolerations | nindent 8 }}
+      {{- end }}
       containers:
         - name: es2c
           {{- if eq .Values.es2c.variant "gpu" }}
           image: "{{ .Values.es2c.image.repository }}:{{ .Values.es2c.image.tag | default "latest" }}-gpu"
           {{- else }}
           image: "{{ .Values.es2c.image.repository }}:{{ .Values.es2c.image.tag | default "latest" }}"
-          {{- end }}
+          {{ end }}
           imagePullPolicy: {{ .Values.es2c.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - containerPort: {{ .Values.es2c.service.port | default 25123 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "es2-chart.fullname" . }}-es2c-config
           env:
-            - name: USE_TOPK
-              value: {{ .Values.es2c.env.useTopk | default false | quote }}
-            - name: USE_GPU
-              value: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
             - name: ES2C_PORT
               value: {{ .Values.es2c.service.port | default 25123 | quote }}
             - name: ES2C_HOST
               value: {{ .Values.es2c.env.host | default "0.0.0.0" | quote }}
             - name: ES2O_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
-            - name: ES2_THREAD_POOL_SCALE
-              value: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
-            - name: ES2C_NUM_SEARCH_HANDLER
-              value: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
+          {{ if .Values.es2c.license.enabled }}
+          volumeMounts:
+            - name: es2c-license
+              mountPath: /es2/license
+              readOnly: true
+          {{ end }}
           {{- if eq .Values.es2c.variant "gpu" }}
           {{- if .Values.es2c.resources.gpu }}
           resources:
             {{- toYaml .Values.es2c.resources.gpu | nindent 12 }}
-          {{- end }}
+          {{ end }}
           {{- else }}
           {{- if .Values.es2c.resources.cpu }}
           resources:
             {{- toYaml .Values.es2c.resources.cpu | nindent 12 }}
-          {{- end }}
-          {{- end }}
+          {{ end }}
+          {{ end }}
+      {{ if .Values.es2c.license.enabled }}
+      {{- $defaultSecretName := printf "%s-es2c-license" (include "es2-chart.fullname" .) -}}
+      {{- $secretName := (coalesce .Values.es2c.license.existingSecret (default $defaultSecretName .Values.es2c.license.secret.name)) -}}
+      volumes:
+        - name: es2c-license
+          secret:
+            secretName: {{ $secretName }}
+            items:
+              - key: {{ .Values.es2c.license.secret.key | default "token.jwt" | quote }}
+                path: token.jwt
+      {{- end }}

@@ -48,6 +48,24 @@ Edit `.env` as needed. `COMPOSE_PROJECT_NAME` customises the network/container p
 
 ---
 
+## 🔐 License Token
+
+- Place your ES2 license file `token.jwt` in the same directory as these compose files (`docker-compose/`).
+- The `es2c` service reads the token from `/es2/license/token.jwt` by default and the compose file mounts it for you:
+
+```yaml
+environment:
+  ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
+# License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
+volumes:
+  - ./token.jwt:/es2/license/token.jwt
+```
+
+- You normally don’t need to set `ES2_LICENSE_TOKEN` in `.env`; the default matches the volume path above.
+- If you change the token filename or path, update both `ES2_LICENSE_TOKEN` and the `volumes` mapping in `docker-compose/docker-compose.envector.yml` accordingly.
+
+---
+
 ## ✅ Step 3. Launch the Stack
 
 Recommended (helper script in this directory):
