@@ -6,6 +6,8 @@ services:
     command: ["postgres", "-c", "max_wal_size=8GB", "-c", "checkpoint_timeout=10min", "-c", "max_connections=100"]
     # volumes:
     #   - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata:/var/lib/postgresql/data
+    # ports:
+    #   - ${ES2_DB_SERVICE_PORT:-5432}:5432
     environment:
       - POSTGRES_USER=${ES2_DB_SERVICE_USER:-myuser}
       - POSTGRES_PASSWORD=${ES2_DB_SERVICE_PASSWORD:-.}
@@ -21,6 +23,9 @@ services:
     command: server /data --address ":${ES2_STORAGE_SERVICE_PORT:-59000}" --console-address ":${ES2_STORAGE_SERVICE_CONSOLE_PORT:-59001}"
     # volumes:
     #   - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/minio/data:/data
+    # ports:
+    #   - ${ES2_STORAGE_SERVICE_PORT:-59000}:${ES2_STORAGE_SERVICE_PORT:-59000}
+    #   - ${ES2_STORAGE_SERVICE_CONSOLE_PORT:-59001}:${ES2_STORAGE_SERVICE_CONSOLE_PORT:-59001}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${ES2_STORAGE_SERVICE_PORT:-59000}/minio/health/live"]
       interval: 2s

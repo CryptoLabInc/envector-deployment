@@ -5,23 +5,53 @@ metadata:
   labels:
     app: {{ include "es2-chart.fullname" . }}
     component: es2b
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.es2b.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: {{ include "es2-chart.fullname" . }}
       component: es2b
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.es2b.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
   template:
     metadata:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2b
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.es2b.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- range .Values.imagePullSecrets }}
         - name: {{ . }}
         {{- end }}
+      {{- end }}
+      {{- if .Values.es2b.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.es2b.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2b.affinity }}
+      affinity:
+        {{- toYaml .Values.es2b.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.es2b.tolerations }}
+      tolerations:
+        {{- toYaml .Values.es2b.tolerations | nindent 8 }}
       {{- end }}
       initContainers:
         - name: wait-for-minio
@@ -31,41 +61,46 @@ spec:
             - -c
             - >-
               until nc -z {{ .Values.externalServices.storage.host }} {{ .Values.externalServices.storage.port }}; do echo waiting for minio; sleep 2; done
+        - name: wait-for-es2c
+          image: busybox
+          command:
+            - sh
+            - -c
+            - >-
+              until nc -z {{ include "es2-chart.fullname" . }}-es2c {{ .Values.es2c.service.port }}; do echo waiting for es2c; sleep 2; done
       containers:
         - name: es2b
           image: "{{ .Values.es2b.image.repository }}:{{ .Values.es2b.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.es2b.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - containerPort: {{ .Values.es2b.service.port | default 50051 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "es2-chart.fullname" . }}-es2b-config
           env:
             - name: ES2B_PORT
               value: {{ .Values.es2b.service.port | default 50051 | quote }}
             - name: ES2O_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
+            {{- if .Values.externalSecrets.enabled }}
+            {{- $defaultAppSecretName := printf "%s-eso" (include "es2-chart.fullname" .) -}}
+            {{- $appSecretName := (default $defaultAppSecretName .Values.externalSecrets.appSecret.name) -}}
             - name: ES2_DB_SERVICE_URL
-              value: {{ .Values.externalServices.metadatadb.url | quote }}
-            - name: ES2_DB_SERVICE_SCHEMA
-              value: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
-            - name: ES2_STORAGE_SERVICE_ADDRESS
-              value: "{{ .Values.externalServices.storage.host | default "localhost" }}:{{ .Values.externalServices.storage.port | default 19000 }}"
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_DB_SERVICE_URL
             - name: ES2_STORAGE_SERVICE_USER
-              value: {{ .Values.externalServices.storage.user | default "minioadmin" | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_STORAGE_SERVICE_USER
             - name: ES2_STORAGE_SERVICE_PASSWORD
-              value: {{ .Values.externalServices.storage.password | default "minioadmin" | quote }}
-            - name: ES2_STORAGE_SECURE
-              value: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-            - name: ES2_STORAGE_SERVICE_REGION
-              value: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-            - name: ES2_STORAGE_SERVICE_CREATE_BUCKET
-              value: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
-            - name: ES2_STORAGE_BUCKET_NAME
-              value: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-            - name: ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT
-              value: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"true"{{ end }}
-            - name: ES2_LOG_LEVEL
-              value: {{ .Values.es2b.logLevel | default "INFO" | quote }}
-            - name: ES2_MAX_NUM_VECTORS_PER_SHARD
-              value: {{ .Values.es2b.env.shardSize | default 8192 | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $appSecretName }}
+                  key: ES2_STORAGE_SERVICE_PASSWORD
+            {{- end }}
           {{- if .Values.es2b.resources }}
           resources:
             {{- toYaml .Values.es2b.resources | nindent 12 }}

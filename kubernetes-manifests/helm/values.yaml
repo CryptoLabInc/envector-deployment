@@ -25,9 +25,14 @@ externalServices:
     hasHealthcheckEndpoint: false # Only for Minio.
 
 imagePullSecrets: []
+
+# Global labels applied to all components
+labels: {}
+
 # Configuration for es2e service
 es2e:
   name: es2e
+  labels: {}
   image:
     repository: cryptolabinc/es2e
     tag: latest
@@ -47,10 +52,14 @@ es2e:
     # requests:
     #   cpu: "0.5"
     #   memory: "1Gi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
 
 # Configuration for es2b service
 es2b:
   name: es2b
+  labels: {}
   image:
     repository: cryptolabinc/es2b
     tag: latest
@@ -60,7 +69,7 @@ es2b:
     port: 50051
   logLevel: INFO
   env:
-    shardSize: 8192
+    shardSize: 4096
   resources: {}
     # limits:
     #   cpu: "1"
@@ -68,10 +77,14 @@ es2b:
     # requests:
     #   cpu: "0.5"
     #   memory: "1Gi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
 
 # Configuration for es2o service
 es2o:
   name: es2o
+  labels: {}
   image:
     repository: cryptolabinc/es2o
     tag: latest
@@ -79,7 +92,10 @@ es2o:
   service:
     type: ClusterIP
     port: 25121
+    headlessSuffix: "-headless"
   command: []
+  logLevel: INFO
+  replicas: 1
   resources: {}
     # limits:
     #   cpu: "1"
@@ -87,10 +103,14 @@ es2o:
     # requests:
     #   cpu: "0.5"
     #   memory: "1Gi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
 
 # Configuration for es2c service
 es2c:
   name: es2c
+  labels: {}
   variant: cpu
   image:
     repository: cryptolabinc/es2c
@@ -106,6 +126,18 @@ es2c:
     host: "0.0.0.0"
     threadPoolScale: 4
     numSearchHandler: 10
+  license:
+    enabled: true
+    tokenPath: "/es2/license/token.jwt"
+    createSecret: true
+    token: ""
+    # Use this to reference an existing Secret instead of creating one
+    existingSecret: ""
+    secret:
+      name: ""
+      key: "token.jwt"
+      # Optional: set a checksum string to force rollout when using existingSecret
+      checksum: ""
   resources:
     cpu:
       limits:
@@ -120,6 +152,9 @@ es2c:
       requests:
         cpu: "4"
         memory: "4Gi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
 
 # Ingress configuration
 ingress:
@@ -141,3 +176,57 @@ ingress:
     # - secretName: es2-tls
     #   hosts:
     #     - es2.local
+
+# External Secrets Operator (ESO) integration
+# When enabled, sensitive values are sourced from ExternalSecrets
+# instead of being rendered into ConfigMaps.
+externalSecrets:
+  enabled: false
+  # Reference to the SecretStore/ClusterSecretStore managed by ESO
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: ""
+  # ExternalSecret for application sensitive envs (DB URL, storage creds)
+  appSecret:
+    # Optional: override the target Secret name created by ESO
+    # Defaults to "<release>-<chart>-eso" when empty
+    name: ""
+    refreshInterval: 1m
+    data: []
+      # Examples:
+      # - secretKey: ES2_DB_SERVICE_URL
+      #   remoteRef:
+      #     key: "prod/app/db"      # remote secret name/path (e.g., AWS SM, Vault, etc.)
+      #     property: "db_url"      # optional: key/property within the remote secret
+      # - secretKey: ES2_DB_SERVICE_URL
+      #   remoteRef:
+      #     key: "prod/app/db"
+      #     property: "db_url"
+      # - secretKey: ES2_STORAGE_SERVICE_USER
+      #   remoteRef:
+      #     key: "prod/minio"
+      #     property: "accessKey"
+      # - secretKey: ES2_STORAGE_SERVICE_PASSWORD
+      #   remoteRef:
+      #     key: "prod/minio"
+      #     property: "secretKey"
+      # - secretKey: ES2_STORAGE_SERVICE_USER
+      #   remoteRef:
+      #     key: "prod/minio"
+      #     property: "accessKey"
+      # - secretKey: ES2_STORAGE_SERVICE_PASSWORD
+      #   remoteRef:
+      #     key: "prod/minio"
+      #     property: "secretKey"
+  # ExternalSecret for license token
+  license:
+    enabled: true
+    # Optional: override the target Secret name created by ESO
+    # Defaults to the same Secret name used by es2c ("<fullname>-es2c-license")
+    name: ""
+    refreshInterval: 1m
+    # Key inside the target Secret where the token will be stored
+    secretKey: "token.jwt"
+    remoteRef:
+      key: ""        # remote secret name/path containing the license token
+      property: ""   # optional: key/property within the remote secret

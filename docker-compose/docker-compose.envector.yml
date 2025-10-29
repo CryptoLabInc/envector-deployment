@@ -2,7 +2,7 @@
 services:
   es2e:
     image: "${ES2E_IMAGE_NAME:-es2e}:${ES2E_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-if_not_present}"
+    pull_policy: "${PULL_POLICY_MSA:-always}"
     ports:
       - ${ES2E_HOST_PORT:-50050}:${ES2E_PORT:-50050}
     environment:
@@ -15,7 +15,7 @@ services:
 
   es2b:
     image: "${ES2B_IMAGE_NAME:-es2b}:${ES2B_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-if_not_present}"
+    pull_policy: "${PULL_POLICY_MSA:-always}"
     environment:
       ES2B_PORT: "${ES2B_PORT:-50051}"
       ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
@@ -32,21 +32,22 @@ services:
 
   es2o:
     image: "${ES2O_IMAGE_NAME:-es2o}:${ES2O_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-if_not_present}"
+    pull_policy: "${PULL_POLICY_MSA:-always}"
     environment:
       ES2O_PORT: "${ES2O_PORT:-25121}"
+      ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
       # Orchestrator DB
-      ES2O_DB_URL: "postgresql://${ES2_DB_SERVICE_USER:-myuser}:${ES2_DB_SERVICE_PASSWORD:-.}@metadatadb:${ES2_DB_SERVICE_PORT:-5432}/${ES2_DB_SERVICE_NAME:-mydatabase}?sslmode=${ES2_DB_SERVICE_SSL:-disable}"
+      ES2_DB_SERVICE_URL: "postgresql://${ES2_DB_SERVICE_USER:-myuser}:${ES2_DB_SERVICE_PASSWORD:-.}@metadatadb:${ES2_DB_SERVICE_PORT:-5432}/${ES2_DB_SERVICE_NAME:-mydatabase}?sslmode=${ES2_DB_SERVICE_SSL:-disable}"
       # Orchestrator Storage
-      ES2O_STG_ENDPOINT: "storage:${ES2_STORAGE_SERVICE_PORT:-59000}"
-      ES2O_STG_ACCESS_KEY: "${ES2_STORAGE_SERVICE_USER:-minioadmin}"
-      ES2O_STG_SECRET_KEY: "${ES2_STORAGE_SERVICE_PASSWORD:-.}"
-      ES2O_STG_SECURE: "${ES2_STORAGE_SECURE:-false}"
-      ES2O_STG_BUCKETNAME: "${ES2_STORAGE_BUCKET_NAME:-es2}"
+      ES2_STORAGE_SERVICE_ADDRESS: "storage:${ES2_STORAGE_SERVICE_PORT:-59000}"
+      ES2_STORAGE_SERVICE_USER: "${ES2_STORAGE_SERVICE_USER:-minioadmin}"
+      ES2_STORAGE_SERVICE_PASSWORD: "${ES2_STORAGE_SERVICE_PASSWORD:-.}"
+      ES2_STORAGE_SECURE: "${ES2_STORAGE_SECURE:-false}"
+      ES2_STORAGE_BUCKET_NAME: "${ES2_STORAGE_BUCKET_NAME:-es2}"
     restart: "always"
   es2c:
     image: "${ES2C_IMAGE_NAME:-es2c}:${ES2C_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_CORE:-if_not_present}"
+    pull_policy: "${PULL_POLICY_CORE:-always}"
     command: []
     environment:
       USE_GPU: "false"
@@ -55,10 +56,10 @@ services:
       ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
       ES2_THREAD_POOL_SCALE: "${ES2_THREAD_POOL_SCALE:-4}"
       ES2C_NUM_SEARCH_HANDLER: "${ES2C_NUM_SEARCH_HANDLER:-10}"
-      ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-}"
-    # License file mount (optional). Uncomment to provide license via file.
-    # volumes:
-    #   - ./token.jwt:/es2/license/token.jwt
+      ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
+    # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
+    volumes:
+      - ./token.jwt:/es2/license/token.jwt
     # deploy:
     #   resources:
     #     limits:

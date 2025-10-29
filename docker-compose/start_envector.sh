@@ -13,6 +13,7 @@ Options:
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
   --num-es2c N           Number of compute workers (CPU: scales es2c, GPU: enables up to N GPUs)
+  --num-es2o N           Number of orchestrator
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
   --down-volumes         When used with --down, also remove named/anonymous volumes (-v)
@@ -44,6 +45,7 @@ DOWN=false
 DRY_RUN=false
 LOG_FILE="${ORIG_PWD}/docker-logs.log"
 NUM_ES2C=1
+NUM_ES2O=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
@@ -66,6 +68,12 @@ while (($#)); do
         echo "--num-es2c must be an integer" >&2; exit 1;
       fi
       NUM_ES2C="$2"; shift 2 ;;
+    --num-es2o)
+      [[ $# -ge 2 ]] || { echo "--num-es2o requires a number" >&2; exit 1; }
+      if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+        echo "--num-es2o must be an integer" >&2; exit 1;
+      fi
+      NUM_ES2O="$2"; shift 2 ;;
     --set)
       [[ $# -ge 2 ]] || { echo "--set requires KEY=VAL" >&2; exit 1; }
       ENV_OVERRIDES+=("$2"); shift 2 ;;
@@ -173,6 +181,9 @@ else
   cmd+=( up -d )
   if ! "$GPU" && (( NUM_ES2C > 1 )); then
     cmd+=( --scale "es2c=${NUM_ES2C}" )
+  fi
+  if (( NUM_ES2O > 1)); then
+    cmd+=( --scale "es2o=${NUM_ES2O}" )
   fi
 fi
 
