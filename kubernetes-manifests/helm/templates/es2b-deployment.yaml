@@ -25,6 +25,14 @@ spec:
       {{- end }}
   template:
     metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and (not .Values.externalSecrets.dbSecret.enabled) (eq (.Values.existingSecrets.dbSecret | default "") "") }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if and (not .Values.externalSecrets.storageSecret.enabled) (eq (.Values.existingSecrets.storageSecret | default "") "") }}
+        checksum/secret-storage: {{ include (print $.Template.BasePath "/secret-storage.yaml") . | sha256sum }}
+        {{- end }}
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2b
@@ -77,30 +85,15 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "es2-chart.fullname" . }}-es2b-config
+            - secretRef:
+                name: {{ include "es2-chart.dbSecretName" . }}
+            - secretRef:
+                name: {{ include "es2-chart.storageSecretName" . }}
           env:
             - name: ES2B_PORT
               value: {{ .Values.es2b.service.port | default 50051 | quote }}
             - name: ES2O_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
-            {{- if .Values.externalSecrets.enabled }}
-            {{- $defaultAppSecretName := printf "%s-eso" (include "es2-chart.fullname" .) -}}
-            {{- $appSecretName := (default $defaultAppSecretName .Values.externalSecrets.appSecret.name) -}}
-            - name: ES2_DB_SERVICE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $appSecretName }}
-                  key: ES2_DB_SERVICE_URL
-            - name: ES2_STORAGE_SERVICE_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $appSecretName }}
-                  key: ES2_STORAGE_SERVICE_USER
-            - name: ES2_STORAGE_SERVICE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $appSecretName }}
-                  key: ES2_STORAGE_SERVICE_PASSWORD
-            {{- end }}
           {{- if .Values.es2b.resources }}
           resources:
             {{- toYaml .Values.es2b.resources | nindent 12 }}

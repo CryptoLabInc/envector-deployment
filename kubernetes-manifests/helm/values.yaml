@@ -96,6 +96,8 @@ es2o:
   command: []
   logLevel: INFO
   replicas: 1
+  election:
+    lockID: "808707" # this value will be hashed internally
   resources: {}
     # limits:
     #   cpu: "1"
@@ -178,38 +180,34 @@ ingress:
     #     - es2.local
 
 # External Secrets Operator (ESO) integration
-# When enabled, sensitive values are sourced from ExternalSecrets
-# instead of being rendered into ConfigMaps.
+# Each secret can be enabled independently
 externalSecrets:
-  enabled: false
   # Reference to the SecretStore/ClusterSecretStore managed by ESO
   secretStoreRef:
     kind: ClusterSecretStore
     name: ""
-  # ExternalSecret for application sensitive envs (DB URL, storage creds)
-  appSecret:
+  # ExternalSecret for DB connection URL
+  dbSecret:
+    enabled: false
     # Optional: override the target Secret name created by ESO
-    # Defaults to "<release>-<chart>-eso" when empty
+    # Defaults to "<release>-<chart>-db-eso" when empty
+    name: ""
+    refreshInterval: 1m
+    data: []
+      # Example:
+      # - secretKey: ES2_DB_SERVICE_URL
+      #   remoteRef:
+      #     key: "prod/app/db"      # remote secret name/path (e.g., AWS SM, Vault, etc.)
+      #     property: "db_url"       # optional: key/property within the remote secret
+  # ExternalSecret for storage credentials
+  storageSecret:
+    enabled: false
+    # Optional: override the target Secret name created by ESO
+    # Defaults to "<release>-<chart>-storage-eso" when empty
     name: ""
     refreshInterval: 1m
     data: []
       # Examples:
-      # - secretKey: ES2_DB_SERVICE_URL
-      #   remoteRef:
-      #     key: "prod/app/db"      # remote secret name/path (e.g., AWS SM, Vault, etc.)
-      #     property: "db_url"      # optional: key/property within the remote secret
-      # - secretKey: ES2_DB_SERVICE_URL
-      #   remoteRef:
-      #     key: "prod/app/db"
-      #     property: "db_url"
-      # - secretKey: ES2_STORAGE_SERVICE_USER
-      #   remoteRef:
-      #     key: "prod/minio"
-      #     property: "accessKey"
-      # - secretKey: ES2_STORAGE_SERVICE_PASSWORD
-      #   remoteRef:
-      #     key: "prod/minio"
-      #     property: "secretKey"
       # - secretKey: ES2_STORAGE_SERVICE_USER
       #   remoteRef:
       #     key: "prod/minio"
@@ -230,3 +228,16 @@ externalSecrets:
     remoteRef:
       key: ""        # remote secret name/path containing the license token
       property: ""   # optional: key/property within the remote secret
+
+# Standard Kubernetes Secret integration
+# Each secret can be configured independently
+# If set, uses existing Secret instead of creating one or using ExternalSecret
+existingSecrets:
+  # Existing Secret for DB connection URL
+  # Defaults to "<release>-<chart>-db-secret" when empty
+  # If empty and externalSecrets.dbSecret.enabled=false, creates default Secret
+  dbSecret: ""
+  # Existing Secret for storage credentials
+  # Defaults to "<release>-<chart>-storage-secret" when empty
+  # If empty and externalSecrets.storageSecret.enabled=false, creates default Secret
+  storageSecret: ""

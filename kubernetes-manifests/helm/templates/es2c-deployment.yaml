@@ -30,6 +30,12 @@ spec:
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2c
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.es2c.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       annotations:
         {{- if .Values.es2c.license.enabled }}
         # Rollout when license Secret manifest changes (created/updated by this chart)
@@ -39,6 +45,7 @@ spec:
         {{- if and .Values.es2c.license.enabled .Values.es2c.license.existingSecret }}
         checksum/external-es2c-license: {{ .Values.es2c.license.secret.checksum | default "" | quote }}
         {{- end }}
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:

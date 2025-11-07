@@ -25,6 +25,8 @@ spec:
       {{- end }}
   template:
     metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app: {{ include "es2-chart.fullname" . }}
         component: es2e

@@ -30,6 +30,7 @@ Examples (run from this directory):
 Notes:
 - Relative paths for --env-file and --log-file are resolved from the current working directory (pwd), not the compose folder.
 - --config prints the fully-resolved docker compose configuration and does not start containers.
+ - Preflight checks: verifies Docker, Docker Hub access (cryptolabinc), and presence of ./token.jwt.
 EOF
 }
 
@@ -49,6 +50,88 @@ NUM_ES2O=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
+
+# --- Preflight helpers ---
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker not found. Please install Docker: https://docs.docker.com/get-docker/" >&2
+    exit 1
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is not reachable. Start Docker or fix permissions (e.g., add your user to the 'docker' group)." >&2
+    exit 1
+  fi
+}
+
+ensure_license() {
+  local token_path="${COMPOSE_DIR}/token.jwt"
+  if [[ -f "${token_path}" ]]; then
+    return 0
+  fi
+  echo "License file not found at Docker-mounted path: ${token_path}"
+  read -rp "Enter path to your ES2 license token.jwt: " src
+  if [[ -z "${src}" || ! -f "${src}" ]]; then
+    echo "License file not found: ${src:-<empty>}" >&2
+    exit 1
+  fi
+  # Resolve source and destination for clearer logging
+  local src_abs
+  src_abs=$(readlink -f "$src" 2>/dev/null || true)
+  local dst_abs
+  dst_abs=$(readlink -f "${COMPOSE_DIR}" 2>/dev/null || echo "${COMPOSE_DIR}")/token.jwt
+  cp "${src}" "${token_path}"
+  if [[ -n "$src_abs" ]]; then
+    echo "Copied license from: ${src_abs}"
+  else
+    echo "Copied license from: ${src}"
+  fi
+  echo "                to: ${dst_abs}"
+}
+
+has_inline_version=false
+chosen_version=""
+
+prompt_version_if_needed() {
+  # If VERSION_TAG is supplied via inline overrides or env, don't prompt.
+  if "$has_inline_version"; then
+    return 0
+  fi
+  local default_tag="${VERSION_TAG:-latest}"
+  local input
+  read -rp "enVector version tag [${default_tag}]: " input || true
+  if [[ -z "${input}" ]]; then
+    chosen_version="${default_tag}"
+  else
+    chosen_version="${input}"
+  fi
+}
+
+check_or_login_dockerhub() {
+  local tag_for_check=${1:-latest}
+  local image="cryptolabinc/es2e:${tag_for_check}"
+  echo "Checking Docker Hub access for ${image} ... (this may take a few seconds)"
+  if docker manifest inspect "${image}" >/dev/null 2>&1; then
+    echo "Docker Hub access succeeded."
+    return 0
+  fi
+  local pat="${DOCKERHUB_PAT:-}"
+  echo "Access to enVector Images requires Docker Hub login."
+  if [[ -z "${pat}" ]]; then
+    echo "Enter a Docker Hub Personal Access Token (PAT) for user 'cltrial'."
+    read -rsp "PAT: " pat
+    echo
+  fi
+  if ! echo "${pat}" | docker login -u cltrial --password-stdin >/dev/null; then
+    echo "Docker login failed. Please verify your PAT and try again." >&2
+    exit 1
+  fi
+  echo "Rechecking access for ${image} ..."
+  if ! docker manifest inspect "${image}" >/dev/null 2>&1; then
+    echo "Cannot access ${image}. Check your PAT and network connectivity." >&2
+    exit 1
+  fi
+  echo "Docker Hub access succeeded."
+}
 
 while (($#)); do
   case "$1" in
@@ -111,15 +194,49 @@ if [[ -n "${LOG_FILE:-}" && "${LOG_FILE}" != /* ]]; then
   LOG_FILE="${ORIG_PWD}/${LOG_FILE}"
 fi
 
-# Ensure env file exists; if missing, copy from .env.example when available
-if [[ ! -f "$ENV_FILE" ]]; then
-  if [[ -f "$COMPOSE_DIR/.env.example" ]]; then
-    mkdir -p "$(dirname "$ENV_FILE")"
-    cp "$COMPOSE_DIR/.env.example" "$ENV_FILE"
-    echo "Created env file from example: $ENV_FILE"
-  else
-    echo "Env file not found and no .env.example available: $ENV_FILE" >&2
-    exit 1
+USE_ENV_FILE=true
+# Ensure env file exists unless we're doing a plain --down
+if ! "$DOWN"; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    if [[ -f "$COMPOSE_DIR/.env.example" ]]; then
+      mkdir -p "$(dirname "$ENV_FILE")"
+      cp "$COMPOSE_DIR/.env.example" "$ENV_FILE"
+      echo "Created env file from example: $ENV_FILE"
+    else
+      echo "Env file not found and no .env.example available: $ENV_FILE" >&2
+      exit 1
+    fi
+  fi
+else
+  # For down: if env file is missing, just proceed without it
+  if [[ ! -f "$ENV_FILE" ]]; then
+    USE_ENV_FILE=false
+  fi
+fi
+
+# Detect if user already provided VERSION_TAG inline; if not, we may prompt later
+if ((${#ENV_OVERRIDES[@]})); then
+  for kv in "${ENV_OVERRIDES[@]}"; do
+    if [[ "$kv" == VERSION_TAG=* ]]; then
+      has_inline_version=true
+      chosen_version="${kv#VERSION_TAG=}"
+      break
+    fi
+  done
+fi
+
+# Preflight checks are skipped for --down, --config, and --dry-run
+if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN"; then
+  require_docker
+  # 1) Verify Docker Hub access first (handles PAT login). Use inline/env tag if provided, else 'latest'.
+  probe_tag="${chosen_version:-${VERSION_TAG:-latest}}"
+  check_or_login_dockerhub "${probe_tag}"
+  # 2) Ensure we have a license token (prompt path -> copy if missing)
+  ensure_license
+  # 3) Version selection last (so users can override the default tag if they want)
+  prompt_version_if_needed
+  if ! "$has_inline_version" && [[ -n "$chosen_version" ]]; then
+    ENV_OVERRIDES+=("VERSION_TAG=${chosen_version}")
   fi
 fi
 
@@ -132,13 +249,21 @@ if "$GPU"; then
   compose_args+=( -f docker-compose.gpu.yml )
 fi
 
+# Ensure GPU compose file is included for 'down' so GPU services are torn down even without --gpu flag
+if "$DOWN"; then
+  compose_args+=( -f docker-compose.gpu.yml )
+fi
+
 compose_args+=( -f docker-compose.infra.yml )
 
 # No additional compose files beyond the standard set above
 
 pushd "$COMPOSE_DIR" >/dev/null
 
-cmd=( docker compose "${compose_args[@]}" --env-file "$ENV_FILE" )
+cmd=( docker compose "${compose_args[@]}" )
+if "$USE_ENV_FILE"; then
+  cmd+=( --env-file "$ENV_FILE" )
+fi
 if [[ -n "$PROJECT" ]]; then
   cmd+=( -p "$PROJECT" )
 fi
@@ -169,6 +294,10 @@ fi
 
 if "$DOWN"; then
   # For down, place subcommand first, then optional -v
+  # Include all known GPU profiles so GPU containers are also removed
+  for i in 1 2 3; do
+    cmd+=( --profile "gpu${i}" )
+  done
   cmd+=( down )
   if "$DOWN_VOLUMES"; then
     cmd+=( -v )
@@ -189,7 +318,7 @@ fi
 
 if "$DRY_RUN"; then
   # Show env overrides and command
-  if ((${#ENV_OVERRIDES[@]})); then
+if ((${#ENV_OVERRIDES[@]})); then
     echo "Env overrides: ${ENV_OVERRIDES[*]}"
   fi
   printf 'Command: '

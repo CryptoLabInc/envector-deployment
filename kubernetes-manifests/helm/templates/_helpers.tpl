@@ -62,3 +62,33 @@ Create the name of the service account to use
     {{ default "default" .Values.serviceAccount.name }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Get DB secret name based on externalSecret/existingSecret/default
+Priority: externalSecret.name > existingSecrets.dbSecret > default
+*/}}
+{{- define "es2-chart.dbSecretName" -}}
+{{- if .Values.externalSecrets.dbSecret.enabled }}
+{{- $defaultSecretName := printf "%s-db-eso" (include "es2-chart.fullname" .) }}
+{{- default $defaultSecretName .Values.externalSecrets.dbSecret.name }}
+{{- else if ne (.Values.existingSecrets.dbSecret | default "") "" }}
+{{- .Values.existingSecrets.dbSecret }}
+{{- else }}
+{{- printf "%s-db-secret" (include "es2-chart.fullname" .) }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Get Storage secret name based on externalSecret/existingSecret/default
+Priority: externalSecret.name > existingSecrets.storageSecret > default
+*/}}
+{{- define "es2-chart.storageSecretName" -}}
+{{- if .Values.externalSecrets.storageSecret.enabled }}
+{{- $defaultSecretName := printf "%s-storage-eso" (include "es2-chart.fullname" .) }}
+{{- default $defaultSecretName .Values.externalSecrets.storageSecret.name }}
+{{- else if ne (.Values.existingSecrets.storageSecret | default "") "" }}
+{{- .Values.existingSecrets.storageSecret }}
+{{- else }}
+{{- printf "%s-storage-secret" (include "es2-chart.fullname" .) }}
+{{- end }}
+{{- end -}}
