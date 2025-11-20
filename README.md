@@ -90,10 +90,11 @@ Recommended for Development. See more details in [docker-compose README](docker-
 git clone https://github.com/CryptoLabInc/envector-deployment.git
 cd envector-deployment/docker-compose
 
-# Copy environment file
+# Copy environment file (optional)
+# If .env is missing, ./start_envector.sh will be created from .env.example automatically
 cp .env.example .env
 
-# Start services
+# Start services (performs preflight: Docker, PAT login if needed, license token)
 ./start_envector.sh
 # OR docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml -p envector up -d
 ```
@@ -180,11 +181,14 @@ es2.init(
 index = es2.create_index("my_index", dim=512)
 
 # Insert vectors
-vectors = [...]  # Your 512-dimensional vectors
+vectors = [
+    [0.001 * i for i in range(512)],
+    [0.001 * i + 0.001 for i in range(512)],
+]
 index.insert(vectors, metadata=["doc1", "doc2"])
 
 # Search
-results = index.search(query_vector, top_k=5)
+results = index.search(vectors[0], top_k=5)
 ```
 
 ### Key Management
@@ -221,4 +225,3 @@ This is a proprietary software project. For contribution inquiries, please conta
 - [FHE Resources](https://fhe.org)
 
 ---
-

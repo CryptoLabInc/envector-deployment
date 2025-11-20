@@ -5,12 +5,12 @@
 The default tags come from `.env.example`:
 
 ```text
-es2e:     cryptolabinc/es2e:${VERSION_TAG} 
-es2b:     cryptolabinc/es2b:${VERSION_TAG}  
-es2o:     cryptolabinc/es2o:${VERSION_TAG}  
-es2c:     cryptolabinc/es2c:${VERSION_TAG}  
+es2e:     cryptolabinc/es2e:${VERSION_TAG}
+es2b:     cryptolabinc/es2b:${VERSION_TAG}
+es2o:     cryptolabinc/es2o:${VERSION_TAG}
+es2c:     cryptolabinc/es2c:${VERSION_TAG}
 postgres: postgres:14.9
-minio:    minio/minio:RELEASE.2023-03-20T20-16-18Z  
+minio:    minio/minio:RELEASE.2023-03-20T20-16-18Z
 ```
 
 ## 🧩 Compose File Layout
@@ -177,7 +177,7 @@ pip install es2
 docker compose down
 # Remove optional volumes if required
 # docker compose down -v
- 
+
 # Using the helper script
 # Keep volumes (default)
 ./start_envector.sh --down
