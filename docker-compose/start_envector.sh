@@ -63,6 +63,14 @@ require_docker() {
   fi
 }
 
+require_docker_compose_v2() {
+  if docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Docker Compose v2 (the 'docker compose' CLI) is required. Install the Compose plugin: https://docs.docker.com/compose/install/" >&2
+  exit 1
+}
+
 ensure_license() {
   local token_path="${COMPOSE_DIR}/token.jwt"
   if [[ -f "${token_path}" ]]; then
@@ -228,6 +236,7 @@ fi
 # Preflight checks are skipped for --down, --config, and --dry-run
 if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN"; then
   require_docker
+  require_docker_compose_v2
   # 1) Verify Docker Hub access first (handles PAT login). Use inline/env tag if provided, else 'latest'.
   probe_tag="${chosen_version:-${VERSION_TAG:-latest}}"
   check_or_login_dockerhub "${probe_tag}"
