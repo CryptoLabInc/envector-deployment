@@ -201,6 +201,10 @@ externalSecrets:
   # ExternalSecret for DB connection URL
   dbSecret:
     enabled: false
+    # Optional: override secretStoreRef just for this ExternalSecret
+    secretStoreRef:
+      kind: ""
+      name: ""
     # Optional: override the target Secret name created by ESO
     # Defaults to "<release>-<chart>-db-eso" when empty
     name: ""
@@ -214,6 +218,10 @@ externalSecrets:
   # ExternalSecret for storage credentials
   storageSecret:
     enabled: false
+    # Optional: override secretStoreRef just for this ExternalSecret
+    secretStoreRef:
+      kind: ""
+      name: ""
     # Optional: override the target Secret name created by ESO
     # Defaults to "<release>-<chart>-storage-eso" when empty
     name: ""
@@ -231,6 +239,10 @@ externalSecrets:
   # ExternalSecret for license token
   license:
     enabled: true
+    # Optional: override secretStoreRef just for this ExternalSecret
+    secretStoreRef:
+      kind: ""
+      name: ""
     # Optional: override the target Secret name created by ESO
     # Defaults to the same Secret name used by es2c ("<fullname>-es2c-license")
     name: ""

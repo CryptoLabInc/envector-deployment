@@ -31,31 +31,31 @@ externalSecrets:
   secretStoreRef:
     kind: ClusterSecretStore
     name: my-secret-store
-  appSecret:
-    # Secret created by ESO that pods will read from (default: <fullname>-eso)
-    name: ""
-    refreshInterval: 1m
+  dbSecret:
+    enabled: true
     data:
       - secretKey: ES2_DB_SERVICE_URL
-        remoteRef: { key: "prod/app/db", property: "db_url" }
+        remoteRef:
+          key: prod/app/db
+          property: db_url
+  storageSecret:
+    enabled: true
+    data:
       - secretKey: ES2_STORAGE_SERVICE_USER
-        remoteRef: { key: "prod/minio", property: "accessKey" }
+        remoteRef: { key: prod/minio, property: accessKey }
       - secretKey: ES2_STORAGE_SERVICE_PASSWORD
-        remoteRef: { key: "prod/minio", property: "secretKey" }
+        remoteRef: { key: prod/minio, property: secretKey }
   license:
     enabled: true
-    # Secret created by ESO for license (default: <fullname>-es2c-license)
-    name: ""
-    refreshInterval: 1m
-    secretKey: token.jwt
     remoteRef:
-      key: "prod/es2/license"
-      property: "token.jwt"
+      key: prod/es2/license
+      property: token.jwt
 ```
 
 Notes:
-- When `externalSecrets.enabled=true`, the chart stops rendering sensitive values into ConfigMaps and instead injects them from the Secret created by ESO.
+- When `externalSecrets.enabled=true`, the chart stops rendering sensitive values into ConfigMaps and instead injects them from Secrets created by ESO.
 - License: with `externalSecrets.enabled=true`, the chart will not create the license Secret itself. Provide `externalSecrets.license.remoteRef` (recommended) or set `es2c.license.existingSecret`.
+- Need different backends (e.g., DB/storage from Parameter Store, license from Secrets Manager)? Set `externalSecrets.<name>.secretStoreRef` inside each block; otherwise every block falls back to the global `secretStoreRef` above.
 
 ### License secret management
 - Default behavior: license is enabled and the chart creates a Secret on first install.

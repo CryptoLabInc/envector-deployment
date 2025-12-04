@@ -105,3 +105,22 @@ tests:
       - equal:
           path: spec.data[0].remoteRef.metadataPolicy
           value: Fetch
+
+  - it: allows overriding secretStoreRef per license ExternalSecret
+    set:
+      externalSecrets.enabled: true
+      externalSecrets.secretStoreRef.name: global-store
+      externalSecrets.secretStoreRef.kind: ClusterSecretStore
+      externalSecrets.license.secretStoreRef.name: sm-store
+      externalSecrets.license.secretStoreRef.kind: SecretStore
+      externalSecrets.license.remoteRef.key: prod/license
+      es2c.license.injectAsEnv: true
+      es2c.license.mountAsFile: false
+    template: templates/externalsecret-license.yaml
+    asserts:
+      - equal:
+          path: spec.secretStoreRef.name
+          value: sm-store
+      - equal:
+          path: spec.secretStoreRef.kind
+          value: SecretStore

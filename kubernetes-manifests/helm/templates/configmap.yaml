@@ -38,6 +38,7 @@ data:
   ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
   ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
   ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
+  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
   ES2_LOG_LEVEL: {{ .Values.es2o.logLevel | default "INFO" | quote }}
 ---
 apiVersion: v1
