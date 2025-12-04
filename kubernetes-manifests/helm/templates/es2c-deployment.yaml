@@ -11,6 +11,9 @@ metadata:
     {{- with .Values.es2c.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- $defaultSecretName := printf "%s-es2c-license" (include "es2-chart.fullname" .) }}
+{{- $secretName := (coalesce .Values.es2c.license.existingSecret (default $defaultSecretName .Values.es2c.license.secret.name)) }}
+{{- $secretKey := (.Values.es2c.license.secret.key | default "token.jwt") }}
 spec:
   strategy:
     type: Recreate
@@ -47,6 +50,8 @@ spec:
         {{- end }}
         checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
+      serviceAccountName: {{ include "es2-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- range .Values.imagePullSecrets }}
@@ -85,7 +90,14 @@ spec:
               value: {{ .Values.es2c.env.host | default "0.0.0.0" | quote }}
             - name: ES2O_ADDRESS
               value: "{{ include "es2-chart.fullname" . }}-es2o:{{ .Values.es2o.service.port | default 25121 }}"
-          {{ if .Values.es2c.license.enabled }}
+          {{- if and .Values.es2c.license.enabled .Values.es2c.license.injectAsEnv }}
+            - name: {{ .Values.es2c.license.envVarName | default "ES2_LICENSE_TOKEN" }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+          {{- end }}
+          {{ if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
           volumeMounts:
             - name: es2c-license
               mountPath: /es2/license
@@ -102,14 +114,12 @@ spec:
             {{- toYaml .Values.es2c.resources.cpu | nindent 12 }}
           {{ end }}
           {{ end }}
-      {{ if .Values.es2c.license.enabled }}
-      {{- $defaultSecretName := printf "%s-es2c-license" (include "es2-chart.fullname" .) -}}
-      {{- $secretName := (coalesce .Values.es2c.license.existingSecret (default $defaultSecretName .Values.es2c.license.secret.name)) -}}
+      {{ if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
       volumes:
         - name: es2c-license
           secret:
             secretName: {{ $secretName }}
             items:
-              - key: {{ .Values.es2c.license.secret.key | default "token.jwt" | quote }}
+              - key: {{ $secretKey | quote }}
                 path: token.jwt
       {{- end }}

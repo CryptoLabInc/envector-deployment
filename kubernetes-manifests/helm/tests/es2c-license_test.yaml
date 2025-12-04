@@ -1,0 +1,107 @@
+suite: es2c license combinations
+tests:
+  - it: defaults mount the token file without env injection
+    template: templates/es2c-deployment.yaml
+    set:
+      es2c.license.token: "dummy-token"
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")]
+      - exists:
+          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+
+  - it: injects env and mounts file when both are enabled
+    template: templates/es2c-deployment.yaml
+    set:
+      es2c.license.injectAsEnv: true
+      es2c.license.mountAsFile: true
+      es2c.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-es2-chart-es2c-license
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.key
+          value: token.jwt
+      - exists:
+          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+
+  - it: injects env only when mountAsFile is false
+    set:
+      es2c.license.injectAsEnv: true
+      es2c.license.mountAsFile: false
+      es2c.license.token: "dummy-token"
+    template: templates/es2c-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-es2-chart-es2c-license
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+
+  - it: configmap omits ES2_LICENSE_TOKEN when mountAsFile is false
+    set:
+      es2c.license.mountAsFile: false
+      es2c.license.createSecret: false
+    template: templates/configmap.yaml
+    documentIndex: 3 # es2c configmap
+    asserts:
+      - notExists:
+          path: data.ES2_LICENSE_TOKEN
+
+  - it: renders secret with provided token when createSecret is used
+    set:
+      es2c.license.token: "dummy-token"
+    template: templates/es2c-license-secret.yaml
+    asserts:
+      - equal:
+          path: stringData["token.jwt"]
+          value: "dummy-token"
+      - equal:
+          path: type
+          value: Opaque
+
+  - it: uses existingSecret name in deployment mounts and env
+    set:
+      es2c.license.existingSecret: my-license
+      es2c.license.injectAsEnv: true
+      es2c.license.mountAsFile: true
+      es2c.license.token: "dummy-token"
+    template: templates/es2c-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: my-license
+      - equal:
+          path: spec.template.spec.volumes[?(@.name=="es2c-license")].secret.secretName
+          value: my-license
+
+  - it: renders ExternalSecret with AWS SM fields when enabled
+    set:
+      externalSecrets.enabled: true
+      externalSecrets.secretStoreRef.name: aws-store
+      externalSecrets.secretStoreRef.kind: ClusterSecretStore
+      externalSecrets.license.remoteRef.key: arn:aws:secretsmanager:us-east-1:123456789012:secret:license
+      externalSecrets.license.remoteRef.property: token
+      externalSecrets.license.remoteRef.version: AWSCURRENT
+      externalSecrets.license.remoteRef.decodingStrategy: Base64
+      externalSecrets.license.remoteRef.metadataPolicy: Fetch
+      es2c.license.injectAsEnv: true
+      es2c.license.mountAsFile: false
+    template: templates/externalsecret-license.yaml
+    asserts:
+      - equal:
+          path: spec.data[0].remoteRef.key
+          value: arn:aws:secretsmanager:us-east-1:123456789012:secret:license
+      - equal:
+          path: spec.data[0].remoteRef.property
+          value: token
+      - equal:
+          path: spec.data[0].remoteRef.version
+          value: AWSCURRENT
+      - equal:
+          path: spec.data[0].remoteRef.decodingStrategy
+          value: Base64
+      - equal:
+          path: spec.data[0].remoteRef.metadataPolicy
+          value: Fetch

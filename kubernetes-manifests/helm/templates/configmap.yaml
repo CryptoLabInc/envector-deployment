@@ -52,6 +52,6 @@ data:
   USE_GPU: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
   ES2_THREAD_POOL_SCALE: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
   ES2C_NUM_SEARCH_HANDLER: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
-  {{- if .Values.es2c.license.enabled }}
+  {{- if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
   ES2_LICENSE_TOKEN: {{ .Values.es2c.license.tokenPath | default "/es2/license/token.jwt" | quote }}
   {{- end }}

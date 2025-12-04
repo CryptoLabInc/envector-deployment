@@ -166,7 +166,7 @@ docker compose ... up > ./docker-logs/docker-compose.log 2>&1 &
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install es2
+pip install pyenvector
 ```
 
 ---

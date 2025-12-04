@@ -7,6 +7,13 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Service Account configuration (set annotations for IRSA, etc.)
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: true
+
 # External services that this chart depends on.
 # These should be running separately.
 externalServices:
@@ -131,6 +138,11 @@ es2c:
   license:
     enabled: true
     tokenPath: "/es2/license/token.jwt"
+    # When true, also inject the token directly as an environment variable from the Secret
+    injectAsEnv: false
+    envVarName: "ES2_LICENSE_TOKEN"
+    # When false, skip mounting the token file (useful if only env injection is desired)
+    mountAsFile: true
     createSecret: true
     token: ""
     # Use this to reference an existing Secret instead of creating one
@@ -228,6 +240,9 @@ externalSecrets:
     remoteRef:
       key: ""        # remote secret name/path containing the license token
       property: ""   # optional: key/property within the remote secret
+      version: ""    # optional: version or versionStage for AWS Secrets Manager
+      decodingStrategy: "" # optional: decodingStrategy if backend requires it
+      metadataPolicy: ""   # optional: metadataPolicy (e.g., for AWS SM)
 
 # Standard Kubernetes Secret integration
 # Each secret can be configured independently

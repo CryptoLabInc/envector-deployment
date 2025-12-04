@@ -2,7 +2,7 @@
 services:
   es2e:
     image: "${ES2E_IMAGE_NAME:-es2e}:${ES2E_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-always}"
+    pull_policy: "${PULL_POLICY:-always}"
     ports:
       - ${ES2E_HOST_PORT:-50050}:${ES2E_PORT:-50050}
     environment:
@@ -12,10 +12,11 @@ services:
       ES2E_HOST_PORT: "${ES2E_HOST_PORT:-50050}"
     depends_on:
       - "es2b"
+    restart: always
 
   es2b:
     image: "${ES2B_IMAGE_NAME:-es2b}:${ES2B_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-always}"
+    pull_policy: "${PULL_POLICY:-always}"
     environment:
       ES2B_PORT: "${ES2B_PORT:-50051}"
       ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
@@ -29,10 +30,11 @@ services:
       ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: "${ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT:-true}"
       ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
       ES2_MAX_NUM_VECTORS_PER_SHARD: "${ES2_MAX_NUM_VECTORS_PER_SHARD:-4096}"
+    restart: always
 
   es2o:
     image: "${ES2O_IMAGE_NAME:-es2o}:${ES2O_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_MSA:-always}"
+    pull_policy: "${PULL_POLICY:-always}"
     environment:
       ES2O_PORT: "${ES2O_PORT:-25121}"
       ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
@@ -44,15 +46,17 @@ services:
       ES2_STORAGE_SERVICE_PASSWORD: "${ES2_STORAGE_SERVICE_PASSWORD:-.}"
       ES2_STORAGE_SECURE: "${ES2_STORAGE_SECURE:-false}"
       ES2_STORAGE_BUCKET_NAME: "${ES2_STORAGE_BUCKET_NAME:-es2}"
-    restart: "always"
+    restart: always
+
   es2c:
     image: "${ES2C_IMAGE_NAME:-es2c}:${ES2C_TAG:-latest}"
-    pull_policy: "${PULL_POLICY_CORE:-always}"
+    pull_policy: "${PULL_POLICY:-always}"
     command: []
     environment:
       USE_GPU: "false"
       ES2C_PORT: "${ES2C_PORT:-25123}"
-      ES2C_HOST: "${ES2C_HOST:-0.0.0.0}"
+      ES2_LOG_LEVEL: DEBUG
+      # ES2C_HOST: "${ES2C_HOST:-0.0.0.0}"
       ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
       ES2_THREAD_POOL_SCALE: "${ES2_THREAD_POOL_SCALE:-4}"
       ES2C_NUM_SEARCH_HANDLER: "${ES2C_NUM_SEARCH_HANDLER:-10}"
@@ -68,6 +72,7 @@ services:
     #     reservations:
     #       cpus: '8.0'
     #       memory: 16G
+    restart: always
     depends_on:
       - "es2o"
 

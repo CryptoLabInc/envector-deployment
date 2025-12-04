@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start/stop enVector using compose files in this directory
+# Allow the script to be customized by other wrappers (e.g., ./scripts/start_envector.sh)
+ENABLE_PREFLIGHTS=${START_ENVECTOR_ENABLE_PREFLIGHTS:-true}
+REQUIRE_LICENSE=${START_ENVECTOR_REQUIRE_LICENSE:-true}
+CHECK_DOCKERHUB=${START_ENVECTOR_CHECK_DOCKERHUB:-true}
+PROMPT_VERSION=${START_ENVECTOR_PROMPT_VERSION:-true}
+EXTRA_COMPOSE_FILES="${START_ENVECTOR_EXTRA_COMPOSE_FILES:-}"
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage: ./start_envector.sh [options]
 
 Options:
   --gpu                  Include docker-compose.gpu.yml
-  --env-file FILE        Env file path (default: ./.env)
+  --env-file FILE        Env file path (default: pwd/.env or override)
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
   --num-es2c N           Number of compute workers (CPU: scales es2c, GPU: enables up to N GPUs)
@@ -26,30 +31,47 @@ Examples (run from this directory):
   ./start_envector.sh --num-es2c 4
   ./start_envector.sh --down
   ./start_envector.sh --config
-
+USAGE
+  if "$ENABLE_PREFLIGHTS"; then
+    cat <<'USAGE'
 Notes:
-- Relative paths for --env-file and --log-file are resolved from the current working directory (pwd), not the compose folder.
+- Preflight checks verify Docker, Docker Hub access (cryptolabinc), and presence of ./token.jwt.
+USAGE
+  fi
+  cat <<'USAGE'
+- Relative paths for --env-file and --log-file are resolved from your current working directory (pwd).
 - --config prints the fully-resolved docker compose configuration and does not start containers.
- - Preflight checks: verifies Docker, Docker Hub access (cryptolabinc), and presence of ./token.jwt.
-EOF
+USAGE
 }
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-COMPOSE_DIR="${script_dir}"
+COMPOSE_DIR="${START_ENVECTOR_COMPOSE_DIR:-$script_dir}"
+REPO_ROOT="${START_ENVECTOR_REPO_ROOT:-$(cd "${script_dir}/../.." && pwd)}"
 ORIG_PWD="$(pwd)"
+PROJECT_DIR="${START_ENVECTOR_PROJECT_DIR:-}"
 
-# Defaults
+DEFAULT_ENV_FILE="${START_ENVECTOR_DEFAULT_ENV_FILE:-${ORIG_PWD}/.env}"
+LOG_FILE="${START_ENVECTOR_DEFAULT_LOG_FILE:-${ORIG_PWD}/docker-logs.log}"
+ENV_FILE="$DEFAULT_ENV_FILE"
+
+ENV_EXAMPLE_SOURCE="${START_ENVECTOR_ENV_EXAMPLE_SOURCE:-${COMPOSE_DIR}/.env.example}"
+if [[ -n "$ENV_EXAMPLE_SOURCE" && "$ENV_EXAMPLE_SOURCE" != /* ]]; then
+  ENV_EXAMPLE_SOURCE="${REPO_ROOT}/${ENV_EXAMPLE_SOURCE}"
+fi
+
 GPU=false
-ENV_FILE="${ORIG_PWD}/.env"
 PROJECT=""
 DOWN=false
 DRY_RUN=false
-LOG_FILE="${ORIG_PWD}/docker-logs.log"
 NUM_ES2C=1
 NUM_ES2O=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
+USE_ENV_FILE=true
+
+has_inline_version=false
+chosen_version=""
 
 # --- Preflight helpers ---
 require_docker() {
@@ -73,6 +95,9 @@ require_docker_compose_v2() {
 
 ensure_license() {
   local token_path="${COMPOSE_DIR}/token.jwt"
+  if ! "$REQUIRE_LICENSE"; then
+    return 0
+  fi
   if [[ -f "${token_path}" ]]; then
     return 0
   fi
@@ -82,7 +107,6 @@ ensure_license() {
     echo "License file not found: ${src:-<empty>}" >&2
     exit 1
   fi
-  # Resolve source and destination for clearer logging
   local src_abs
   src_abs=$(readlink -f "$src" 2>/dev/null || true)
   local dst_abs
@@ -96,12 +120,8 @@ ensure_license() {
   echo "                to: ${dst_abs}"
 }
 
-has_inline_version=false
-chosen_version=""
-
 prompt_version_if_needed() {
-  # If VERSION_TAG is supplied via inline overrides or env, don't prompt.
-  if "$has_inline_version"; then
+  if "$has_inline_version" || ! "$PROMPT_VERSION"; then
     return 0
   fi
   local default_tag="${VERSION_TAG:-latest}"
@@ -115,6 +135,9 @@ prompt_version_if_needed() {
 }
 
 check_or_login_dockerhub() {
+  if ! "$CHECK_DOCKERHUB"; then
+    return 0
+  fi
   local tag_for_check=${1:-latest}
   local image="cryptolabinc/es2e:${tag_for_check}"
   echo "Checking Docker Hub access for ${image} ... (this may take a few seconds)"
@@ -180,7 +203,6 @@ while (($#)); do
     -h|--help)
       usage; exit 0 ;;
     *=*)
-      # convenience: allow KEY=VAL tokens directly
       ENV_OVERRIDES+=("$1"); shift ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -194,7 +216,6 @@ if [[ ! -d "$COMPOSE_DIR" ]]; then
   exit 1
 fi
 
-# Normalize paths: resolve relative --env-file/--log-file against the caller's working directory
 if [[ -n "${ENV_FILE:-}" && "${ENV_FILE}" != /* ]]; then
   ENV_FILE="${ORIG_PWD}/${ENV_FILE}"
 fi
@@ -202,13 +223,11 @@ if [[ -n "${LOG_FILE:-}" && "${LOG_FILE}" != /* ]]; then
   LOG_FILE="${ORIG_PWD}/${LOG_FILE}"
 fi
 
-USE_ENV_FILE=true
-# Ensure env file exists unless we're doing a plain --down
 if ! "$DOWN"; then
   if [[ ! -f "$ENV_FILE" ]]; then
-    if [[ -f "$COMPOSE_DIR/.env.example" ]]; then
+    if [[ -n "$ENV_EXAMPLE_SOURCE" && -f "$ENV_EXAMPLE_SOURCE" ]]; then
       mkdir -p "$(dirname "$ENV_FILE")"
-      cp "$COMPOSE_DIR/.env.example" "$ENV_FILE"
+      cp "$ENV_EXAMPLE_SOURCE" "$ENV_FILE"
       echo "Created env file from example: $ENV_FILE"
     else
       echo "Env file not found and no .env.example available: $ENV_FILE" >&2
@@ -216,13 +235,11 @@ if ! "$DOWN"; then
     fi
   fi
 else
-  # For down: if env file is missing, just proceed without it
   if [[ ! -f "$ENV_FILE" ]]; then
     USE_ENV_FILE=false
   fi
 fi
 
-# Detect if user already provided VERSION_TAG inline; if not, we may prompt later
 if ((${#ENV_OVERRIDES[@]})); then
   for kv in "${ENV_OVERRIDES[@]}"; do
     if [[ "$kv" == VERSION_TAG=* ]]; then
@@ -233,39 +250,41 @@ if ((${#ENV_OVERRIDES[@]})); then
   done
 fi
 
-# Preflight checks are skipped for --down, --config, and --dry-run
-if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN"; then
+if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN" && "$ENABLE_PREFLIGHTS"; then
   require_docker
   require_docker_compose_v2
-  # 1) Verify Docker Hub access first (handles PAT login). Use inline/env tag if provided, else 'latest'.
   probe_tag="${chosen_version:-${VERSION_TAG:-latest}}"
   check_or_login_dockerhub "${probe_tag}"
-  # 2) Ensure we have a license token (prompt path -> copy if missing)
   ensure_license
-  # 3) Version selection last (so users can override the default tag if they want)
   prompt_version_if_needed
   if ! "$has_inline_version" && [[ -n "$chosen_version" ]]; then
     ENV_OVERRIDES+=("VERSION_TAG=${chosen_version}")
   fi
 fi
 
-# Base compose files (gpu override must come before infra)
 compose_args=(
-  -f docker-compose.envector.yml
+  -f "${COMPOSE_DIR}/docker-compose.envector.yml"
 )
 
 if "$GPU"; then
-  compose_args+=( -f docker-compose.gpu.yml )
+  compose_args+=( -f "${COMPOSE_DIR}/docker-compose.gpu.yml" )
 fi
 
-# Ensure GPU compose file is included for 'down' so GPU services are torn down even without --gpu flag
 if "$DOWN"; then
-  compose_args+=( -f docker-compose.gpu.yml )
+  case " ${compose_args[*]} " in
+    *" ${COMPOSE_DIR}/docker-compose.gpu.yml "*) : ;;
+    *) compose_args+=( -f "${COMPOSE_DIR}/docker-compose.gpu.yml" ) ;;
+  esac
 fi
 
-compose_args+=( -f docker-compose.infra.yml )
+compose_args+=( -f "${COMPOSE_DIR}/docker-compose.infra.yml" )
 
-# No additional compose files beyond the standard set above
+if [[ -n "$EXTRA_COMPOSE_FILES" ]]; then
+  while IFS= read -r extra_file; do
+    [[ -z "$extra_file" ]] && continue
+    compose_args+=( -f "$extra_file" )
+  done <<< "$EXTRA_COMPOSE_FILES"
+fi
 
 pushd "$COMPOSE_DIR" >/dev/null
 
@@ -273,16 +292,15 @@ cmd=( docker compose "${compose_args[@]}" )
 if "$USE_ENV_FILE"; then
   cmd+=( --env-file "$ENV_FILE" )
 fi
+if [[ -n "$PROJECT_DIR" ]]; then
+  cmd+=( --project-directory "$PROJECT_DIR" )
+fi
 if [[ -n "$PROJECT" ]]; then
   cmd+=( -p "$PROJECT" )
 fi
 
-# Apply num-es2c differently for CPU vs GPU
 if "$GPU"; then
-  # GPU: base es2c uses GPU0; additional GPUs are enabled via profiles gpu1..gpu3
-  # Support up to 4 GPUs by default
   if "$DOWN"; then
-    # When tearing down, include all known GPU profiles so all GPU containers are removed
     for i in 1 2 3; do
       cmd+=( --profile "gpu${i}" )
     done
@@ -300,10 +318,7 @@ if "$GPU"; then
   fi
 fi
 
-
 if "$DOWN"; then
-  # For down, place subcommand first, then optional -v
-  # Include all known GPU profiles so GPU containers are also removed
   for i in 1 2 3; do
     cmd+=( --profile "gpu${i}" )
   done
@@ -312,22 +327,19 @@ if "$DOWN"; then
     cmd+=( -v )
   fi
 elif "$CONFIG_MODE"; then
-  # Print merged config only
   cmd+=( config )
 else
-  # For up, place service-specific flags like --scale after the subcommand
   cmd+=( up -d )
   if ! "$GPU" && (( NUM_ES2C > 1 )); then
     cmd+=( --scale "es2c=${NUM_ES2C}" )
   fi
-  if (( NUM_ES2O > 1)); then
+  if (( NUM_ES2O > 1 )); then
     cmd+=( --scale "es2o=${NUM_ES2O}" )
   fi
 fi
 
 if "$DRY_RUN"; then
-  # Show env overrides and command
-if ((${#ENV_OVERRIDES[@]})); then
+  if ((${#ENV_OVERRIDES[@]})); then
     echo "Env overrides: ${ENV_OVERRIDES[*]}"
   fi
   printf 'Command: '
@@ -337,7 +349,6 @@ if ((${#ENV_OVERRIDES[@]})); then
   exit 0
 fi
 
-# Execute with inline env overrides in a subshell
 (
   set -euo pipefail
   if ((${#ENV_OVERRIDES[@]})); then
@@ -348,13 +359,16 @@ fi
   "${cmd[@]}"
 )
 
-# After successful up, start background log tail (skip for down/config)
 if ! "$DOWN" && ! "$CONFIG_MODE"; then
   mkdir -p "$(dirname "$LOG_FILE")"
-  # Truncate log file on each start to avoid appending to old logs
   : > "$LOG_FILE"
-  # Build a fresh logs command mirroring compose args and project/profiles
-  log_cmd=( docker compose "${compose_args[@]}" --env-file "$ENV_FILE" )
+  log_cmd=( docker compose "${compose_args[@]}" )
+  if "$USE_ENV_FILE"; then
+    log_cmd+=( --env-file "$ENV_FILE" )
+  fi
+  if [[ -n "$PROJECT_DIR" ]]; then
+    log_cmd+=( --project-directory "$PROJECT_DIR" )
+  fi
   if [[ -n "$PROJECT" ]]; then
     log_cmd+=( -p "$PROJECT" )
   fi
@@ -365,7 +379,6 @@ if ! "$DOWN" && ! "$CONFIG_MODE"; then
       log_cmd+=( --profile "gpu${i}" )
     done
   fi
-  # Run logs -f in background with same env overrides
   (
     set -euo pipefail
     if ((${#ENV_OVERRIDES[@]})); then
