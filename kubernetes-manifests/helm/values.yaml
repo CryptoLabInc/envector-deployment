@@ -152,20 +152,20 @@ es2c:
       key: "token.jwt"
       # Optional: set a checksum string to force rollout when using existingSecret
       checksum: ""
-  resources:
-    cpu:
-      limits:
-        cpu: "4"
-      requests:
-        cpu: "2"
-        memory: "2Gi"
-    gpu:
-      limits:
-        nvidia.com/gpu: 1
-        cpu: "8"
-      requests:
-        cpu: "4"
-        memory: "4Gi"
+  # resources:
+  #   cpu:
+  #     limits:
+  #       cpu: "4"
+  #     requests:
+  #       cpu: "2"
+  #       memory: "2Gi"
+  #   gpu:
+  #     limits:
+  #       nvidia.com/gpu: 1
+  #       cpu: "8"
+  #     requests:
+  #       cpu: "4"
+  #       memory: "4Gi"
   nodeSelector: {}
   affinity: {}
   tolerations: []

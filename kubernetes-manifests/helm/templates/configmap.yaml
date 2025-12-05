@@ -22,7 +22,7 @@ data:
   ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
   ES2_STORAGE_SERVICE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
   ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"true"{{ end }}
+  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
   ES2_LOG_LEVEL: {{ .Values.es2b.logLevel | default "INFO" | quote }}
   ES2_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.es2b.env.shardSize | default 4096 | quote }}
 ---

@@ -104,16 +104,16 @@ spec:
               readOnly: true
           {{ end }}
           {{- if eq .Values.es2c.variant "gpu" }}
-          {{- if .Values.es2c.resources.gpu }}
-          resources:
-            {{- toYaml .Values.es2c.resources.gpu | nindent 12 }}
-          {{ end }}
+            {{- with .Values.es2c.resources.gpu }}
+            resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- else }}
-          {{- if .Values.es2c.resources.cpu }}
-          resources:
-            {{- toYaml .Values.es2c.resources.cpu | nindent 12 }}
-          {{ end }}
-          {{ end }}
+            {{- with .Values.es2c.resources.cpu }}
+            resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
       {{ if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
       volumes:
         - name: es2c-license
