@@ -11,7 +11,7 @@ services:
       ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
       ES2_THREAD_POOL_SCALE: "${ES2_THREAD_POOL_SCALE:-4}"
       ES2C_NUM_SEARCH_HANDLER: "${ES2C_NUM_SEARCH_HANDLER:-10}"
-      ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-}"
+      ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
       NVIDIA_VISIBLE_DEVICES: "${ES2C_GPU0_ID:-0}"
     # License file mount (optional). Uncomment to provide license via file.
     # volumes:
