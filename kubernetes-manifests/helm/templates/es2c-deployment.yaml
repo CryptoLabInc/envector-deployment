@@ -105,12 +105,12 @@ spec:
           {{ end }}
           {{- if eq .Values.es2c.variant "gpu" }}
             {{- with (dig "resources" "gpu" .Values.es2c) }}
-            resources:
+          resources:
               {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- else }}
             {{- with (dig "resources" "cpu" .Values.es2c) }}
-            resources:
+          resources:
               {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
