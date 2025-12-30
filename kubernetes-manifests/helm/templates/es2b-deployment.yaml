@@ -63,21 +63,6 @@ spec:
       tolerations:
         {{- toYaml .Values.es2b.tolerations | nindent 8 }}
       {{- end }}
-      initContainers:
-        - name: wait-for-minio
-          image: busybox
-          command:
-            - sh
-            - -c
-            - >-
-              until nc -z {{ .Values.externalServices.storage.host }} {{ .Values.externalServices.storage.port }}; do echo waiting for minio; sleep 2; done
-        - name: wait-for-es2c
-          image: busybox
-          command:
-            - sh
-            - -c
-            - >-
-              until nc -z {{ include "es2-chart.fullname" . }}-es2c {{ .Values.es2c.service.port }}; do echo waiting for es2c; sleep 2; done
       containers:
         - name: es2b
           image: "{{ .Values.es2b.image.repository }}:{{ .Values.es2b.image.tag | default "latest" }}"

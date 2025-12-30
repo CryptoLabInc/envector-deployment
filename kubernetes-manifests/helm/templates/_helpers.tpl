@@ -92,3 +92,17 @@ Priority: externalSecret.name > existingSecrets.storageSecret > default
 {{- printf "%s-storage-secret" (include "es2-chart.fullname" .) }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Compute storage endpoint from host/port.
+Only returns "<host>:<port>" when both are provided; otherwise returns "".
+*/}}
+{{- define "es2-chart.storageEndpoint" -}}
+{{- $host := .Values.externalServices.storage.host | default "" -}}
+{{- $port := .Values.externalServices.storage.port | default "" -}}
+{{- if and $host $port -}}
+{{- printf "%s:%s" $host $port -}}
+{{- else -}}
+{{- "" -}}
+{{- end -}}
+{{- end -}}

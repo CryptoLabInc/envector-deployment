@@ -104,12 +104,12 @@ spec:
               readOnly: true
           {{ end }}
           {{- if eq .Values.es2c.variant "gpu" }}
-            {{- with (dig "resources" "gpu" .Values.es2c) }}
+            {{- with (get (default dict .Values.es2c.resources) "gpu") }}
           resources:
               {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- else }}
-            {{- with (dig "resources" "cpu" .Values.es2c) }}
+            {{- with (get (default dict .Values.es2c.resources) "cpu") }}
           resources:
               {{- toYaml . | nindent 12 }}
             {{- end }}
