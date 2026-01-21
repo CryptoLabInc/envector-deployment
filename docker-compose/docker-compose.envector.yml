@@ -64,6 +64,7 @@ services:
       ES2_THREAD_POOL_SCALE: "${ES2_THREAD_POOL_SCALE:-4}"
       ES2C_NUM_SEARCH_HANDLER: "${ES2C_NUM_SEARCH_HANDLER:-10}"
       ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
+      ENVECTOR_LICENSE_TOKEN: "/es2/license/token.jwt"
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
       - ./token.jwt:/es2/license/token.jwt
