@@ -26,7 +26,7 @@ services:
       # Limit glibc malloc arenas to prevent memory retention (default: 8 * num_cpus)
       MALLOC_ARENA_MAX: "2"
       ENVECTOR_SHAPER_PORT: "${ENVECTOR_SHAPER_PORT:-50056}"
-      ENVECTOR_LOG_LEVEL: "${ENVECTOR_ES2_LOG_LEVEL:-INFO}"
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       # Storage
       ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
       ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
@@ -87,12 +87,12 @@ services:
     environment:
       USE_GPU: "false"
       ENVECTOR_COMPUTE_PORT: "${ENVECTOR_COMPUTE_PORT:-25123}"
-      ENVECTOR_LOG_LEVEL: DEBUG
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
       ENVECTOR_THREAD_POOL_SCALE: "${ENVECTOR_THREAD_POOL_SCALE:-4}"
       ENVECTOR_NUM_SEARCH_HANDLER: "${ENVECTOR_NUM_SEARCH_HANDLER:-10}"
       ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
-      NUM_SEARCH_WORKERS: "30"
+      NUM_SEARCH_WORKERS: "${NUM_SEARCH_WORKERS:-30}"
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
       - ./token.jwt:/envector/license/token.jwt
