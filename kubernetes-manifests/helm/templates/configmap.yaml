@@ -1,60 +1,60 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2e-config
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}-config
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2e
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
 data:
-  ES2_LOG_LEVEL: {{ .Values.es2e.logLevel | default "INFO" | quote }}
+  ENVECTOR_LOG_LEVEL: {{ .Values.endpoint.logLevel | default "INFO" | quote }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2b-config
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}-config
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2b
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
 data:
-  ES2_DB_SERVICE_SCHEMA: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
-  ES2_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
-  ES2_STORAGE_SERVICE_ADDRESS: {{ include "es2-chart.storageEndpoint" . | quote }}
-  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-  ES2_STORAGE_SERVICE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
-  ES2_LOG_LEVEL: {{ .Values.es2b.logLevel | default "INFO" | quote }}
-  ES2_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.es2b.env.shardSize | default 4096 | quote }}
+  ENVECTOR_DB_SCHEMA: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
+  ENVECTOR_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
+  ENVECTOR_STORAGE_ADDRESS: {{ include "envector-chart.storageEndpoint" . | quote }}
+  ENVECTOR_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  ENVECTOR_STORAGE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "envector" | quote }}
+  ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
+  ENVECTOR_LOG_LEVEL: {{ .Values.backend.logLevel | default "INFO" | quote }}
+  ENVECTOR_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.backend.env.shardSize | default 4096 | quote }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2o-config
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-config
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2o
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
 data:
-  ES2_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
-  ES2_STORAGE_SERVICE_ADDRESS: {{ include "es2-chart.storageEndpoint" . | quote }}
-  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
-  ES2_LOG_LEVEL: {{ .Values.es2o.logLevel | default "INFO" | quote }}
+  ENVECTOR_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
+  ENVECTOR_STORAGE_ADDRESS: {{ include "envector-chart.storageEndpoint" . | quote }}
+  ENVECTOR_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  ENVECTOR_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "envector" | quote }}
+  ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
+  ENVECTOR_LOG_LEVEL: {{ .Values.orchestrator.logLevel | default "INFO" | quote }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2c-config
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}-config
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2c
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
 data:
-  USE_TOPK: {{ .Values.es2c.env.useTopk | default false | quote }}
-  USE_GPU: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
-  ES2_THREAD_POOL_SCALE: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
-  ES2C_NUM_SEARCH_HANDLER: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
-  {{- if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
-  ES2_LICENSE_TOKEN: {{ .Values.es2c.license.tokenPath | default "/es2/license/token.jwt" | quote }}
+  USE_TOPK: {{ .Values.compute.env.useTopk | default false | quote }}
+  USE_GPU: {{ if eq .Values.compute.variant "gpu" }}"true"{{ else }}"false"{{ end }}
+  ENVECTOR_THREAD_POOL_SCALE: {{ .Values.compute.env.threadPoolScale | default 4 | quote }}
+  ENVECTOR_NUM_SEARCH_HANDLER: {{ .Values.compute.env.numSearchHandler | default 10 | quote }}
+  {{- if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+  ENVECTOR_LICENSE_TOKEN: {{ .Values.compute.license.tokenPath | default "/envector/license/token.jwt" | quote }}
   {{- end }}

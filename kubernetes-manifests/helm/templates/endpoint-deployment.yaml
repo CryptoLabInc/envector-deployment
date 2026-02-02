@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.endpoint.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.endpointName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.endpoint.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.endpointName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.endpoint.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.endpoint.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.endpoint.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.endpoint.affinity }}
+      affinity:
+        {{- toYaml .Values.endpoint.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.endpoint.tolerations }}
+      tolerations:
+        {{- toYaml .Values.endpoint.tolerations | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-backend
+          image: busybox
+          command:
+            - sh
+            - -c
+            - >-
+              until nc -z {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }} {{ .Values.backend.service.port }}; do echo waiting for backend; sleep 2; done
+        - name: wait-for-orchestrator
+          image: busybox
+          command:
+            - sh
+            - -c
+            - >-
+              until nc -z {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }} {{ .Values.orchestrator.service.port }}; do echo waiting for orchestrator; sleep 2; done
+      containers:
+        - name: {{ include "envector-chart.endpointName" . }}
+          image: "{{ .Values.endpoint.image.repository }}:{{ .Values.endpoint.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.endpoint.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.endpoint.service.port | default 50050 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}-config
+          env:
+            - name: ENVECTOR_ENDPOINT_PORT
+              value: {{ .Values.endpoint.service.port | default 50050 | quote }}
+            - name: ENVECTOR_BACKEND_ADDR
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}:{{ .Values.backend.service.port | default 50051 }}"
+            - name: ENVECTOR_ENDPOINT_HOST_PORT
+              value: {{ .Values.endpoint.service.nodePort | default (.Values.endpoint.service.port | default 50050) | quote }}
+          {{- if .Values.endpoint.resources }}
+          resources:
+            {{- toYaml .Values.endpoint.resources | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.endpoint.service.port | default 50050 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3

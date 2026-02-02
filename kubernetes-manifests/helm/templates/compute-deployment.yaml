@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ .Values.compute.service.port | default 25123 }}
+      targetPort: {{ .Values.compute.service.port | default 25123 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.compute.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- $defaultSecretName := printf "%s-%s-license" (include "envector-chart.fullname" .) (include "envector-chart.computeName" .) }}
+{{- $secretName := (coalesce .Values.compute.license.existingSecret (default $defaultSecretName .Values.compute.license.secret.name)) }}
+{{- $secretKey := (.Values.compute.license.secret.key | default "token.jwt") }}
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+  replicas: {{ .Values.compute.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.computeName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.compute.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.computeName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.compute.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.compute.license.enabled }}
+        # Rollout when license Secret manifest changes (created/updated by this chart)
+        checksum/compute-license: {{ include (print $.Template.BasePath "/compute-license-secret.yaml") . | sha256sum }}
+        {{- end }}
+        # Optional manual trigger when using an external Secret
+        {{- if and .Values.compute.license.enabled .Values.compute.license.existingSecret }}
+        checksum/external-compute-license: {{ .Values.compute.license.secret.checksum | default "" | quote }}
+        {{- end }}
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.compute.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.compute.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.compute.affinity }}
+      affinity:
+        {{- toYaml .Values.compute.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.compute.tolerations }}
+      tolerations:
+        {{- toYaml .Values.compute.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.computeName" . }}
+          {{- if eq .Values.compute.variant "gpu" }}
+          image: "{{ .Values.compute.image.repository }}:{{ .Values.compute.image.tag | default "latest" }}-gpu"
+          {{- else }}
+          image: "{{ .Values.compute.image.repository }}:{{ .Values.compute.image.tag | default "latest" }}"
+          {{ end }}
+          imagePullPolicy: {{ .Values.compute.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.compute.service.port | default 25123 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}-config
+          env:
+            - name: ENVECTOR_COMPUTE_PORT
+              value: {{ .Values.compute.service.port | default 25123 | quote }}
+            - name: ENVECTOR_COMPUTE_HOST
+              value: {{ .Values.compute.env.host | default "0.0.0.0" | quote }}
+            - name: ENVECTOR_ORCHESTRATOR_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}:{{ .Values.orchestrator.service.port | default 25121 }}"
+            - name: ENVECTOR_COMPUTE_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ENVECTOR_COMPUTE_KUBE_SERVICE
+              value: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+          {{- if and .Values.compute.license.enabled .Values.compute.license.injectAsEnv }}
+            - name: {{ .Values.compute.license.envVarName | default "ENVECTOR_LICENSE_TOKEN" }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+          {{- end }}
+          {{ if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+          volumeMounts:
+            - name: compute-license
+              mountPath: /envector/license
+              readOnly: true
+          {{ end }}
+          {{- if eq .Values.compute.variant "gpu" }}
+            {{- with (get (default dict .Values.compute.resources) "gpu") }}
+          resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
+            {{- with (get (default dict .Values.compute.resources) "cpu") }}
+          resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+      {{ if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+      volumes:
+        - name: compute-license
+          secret:
+            secretName: {{ $secretName }}
+            items:
+              - key: {{ $secretKey | quote }}
+                path: token.jwt
+      {{- end }}

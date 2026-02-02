@@ -1,4 +1,4 @@
-# es2-chart/values.yaml
+# envector-chart/values.yaml
 
 # Global settings can be defined here
 # username is used to mimic the ${USER_NAME} variable from docker-compose
@@ -37,12 +37,13 @@ imagePullSecrets: []
 # Global labels applied to all components
 labels: {}
 
-# Configuration for es2e service
-es2e:
-  name: es2e
+# Configuration for envector endpoint service
+endpoint:
+  # Use "endpoint" if your release/chart name already includes "envector"
+  name: envector-endpoint
   labels: {}
   image:
-    repository: cryptolabinc/es2e
+    repository: cryptolabinc/envector-endpoint
     tag: latest
     pullPolicy: IfNotPresent
   service:
@@ -50,7 +51,7 @@ es2e:
     port: 50050
     # type: LoadBalancer # Enable this for direct external access without ingress
     # nodePort: 30050 # Optionally specify a nodePort when using NodePort type
-    # Optional pod annotations for es2e deployment
+    # Optional pod annotations for endpoint deployment
     annotations: {}
   logLevel: INFO
   resources: {}
@@ -64,12 +65,13 @@ es2e:
   affinity: {}
   tolerations: []
 
-# Configuration for es2b service
-es2b:
-  name: es2b
+# Configuration for envector backend service
+backend:
+  # Use "backend" if your release/chart name already includes "envector"
+  name: envector-backend
   labels: {}
   image:
-    repository: cryptolabinc/es2b
+    repository: cryptolabinc/envector-backend
     tag: latest
     pullPolicy: IfNotPresent
   service:
@@ -89,12 +91,13 @@ es2b:
   affinity: {}
   tolerations: []
 
-# Configuration for es2o service
-es2o:
-  name: es2o
+# Configuration for envector orchestrator service
+orchestrator:
+  # Use "orchestrator" if your release/chart name already includes "envector"
+  name: envector-orchestrator
   labels: {}
   image:
-    repository: cryptolabinc/es2o
+    repository: cryptolabinc/envector-orchestrator
     tag: latest
     pullPolicy: IfNotPresent
   service:
@@ -117,18 +120,20 @@ es2o:
   affinity: {}
   tolerations: []
 
-# Configuration for es2c service
-es2c:
-  name: es2c
+# Configuration for envector compute service
+compute:
+  # Use "compute" if your release/chart name already includes "envector"
+  name: envector-compute
   labels: {}
   variant: cpu
   image:
-    repository: cryptolabinc/es2c
+    repository: cryptolabinc/envector-compute
     tag: latest
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 25123
+    headlessSuffix: "-headless"
   command: []
   replicas: 2
   env:
@@ -138,10 +143,10 @@ es2c:
     numSearchHandler: 10
   license:
     enabled: true
-    tokenPath: "/es2/license/token.jwt"
+    tokenPath: "/envector/license/token.jwt"
     # When true, also inject the token directly as an environment variable from the Secret
     injectAsEnv: false
-    envVarName: "ES2_LICENSE_TOKEN"
+    envVarName: "ENVECTOR_LICENSE_TOKEN"
     # When false, skip mounting the token file (useful if only env injection is desired)
     mountAsFile: true
     createSecret: true
@@ -180,17 +185,17 @@ ingress:
     # kubernetes.io/tls-acme: "true"
     # cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: es2.local
+    - host: envector.local
       paths:
         - path: /
           pathType: Prefix
           service:
-            name: es2e
+            name: envector-endpoint
             port: 50050
   tls: []
-    # - secretName: es2-tls
+    # - secretName: envector-tls
     #   hosts:
-    #     - es2.local
+    #     - envector.local
 
 # External Secrets Operator (ESO) integration
 # Each secret can be enabled independently
@@ -212,7 +217,7 @@ externalSecrets:
     refreshInterval: 1m
     data: []
       # Example:
-      # - secretKey: ES2_DB_SERVICE_URL
+      # - secretKey: ENVECTOR_DB_URL
       #   remoteRef:
       #     key: "prod/app/db"      # remote secret name/path (e.g., AWS SM, Vault, etc.)
       #     property: "db_url"       # optional: key/property within the remote secret
@@ -229,11 +234,11 @@ externalSecrets:
     refreshInterval: 1m
     data: []
       # Examples:
-      # - secretKey: ES2_STORAGE_SERVICE_USER
+      # - secretKey: ENVECTOR_STORAGE_USER
       #   remoteRef:
       #     key: "prod/minio"
       #     property: "accessKey"
-      # - secretKey: ES2_STORAGE_SERVICE_PASSWORD
+      # - secretKey: ENVECTOR_STORAGE_PASSWORD
       #   remoteRef:
       #     key: "prod/minio"
       #     property: "secretKey"
@@ -245,7 +250,7 @@ externalSecrets:
       kind: ""
       name: ""
     # Optional: override the target Secret name created by ESO
-    # Defaults to the same Secret name used by es2c ("<fullname>-es2c-license")
+    # Defaults to the same Secret name used by compute ("<fullname>-envector-compute-license")
     name: ""
     refreshInterval: 1m
     # Key inside the target Secret where the token will be stored

@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "es2-chart.fullname" . }}
+  name: {{ include "envector-chart.fullname" . }}
   labels:
-    {{- include "es2-chart.labels" . | nindent 4 }}
+    {{- include "envector-chart.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -33,7 +33,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "es2-chart.fullname" $ }}-{{ .service.name }}
+                name: {{ include "envector-chart.fullname" $ }}-{{ .service.name }}
                 port:
                   number: {{ .service.port }}
           {{- end }}

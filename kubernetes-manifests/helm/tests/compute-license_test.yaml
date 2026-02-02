@@ -1,58 +1,58 @@
-suite: es2c license combinations
+suite: compute license combinations
 tests:
   - it: defaults mount the token file without env injection
-    template: templates/es2c-deployment.yaml
+    template: templates/compute-deployment.yaml
     set:
-      es2c.license.token: "dummy-token"
+      compute.license.token: "dummy-token"
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")]
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")]
       - exists:
-          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
 
   - it: injects env and mounts file when both are enabled
-    template: templates/es2c-deployment.yaml
+    template: templates/compute-deployment.yaml
     set:
-      es2c.license.injectAsEnv: true
-      es2c.license.mountAsFile: true
-      es2c.license.token: "dummy-token"
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: true
+      compute.license.token: "dummy-token"
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
-          value: RELEASE-NAME-es2-chart-es2c-license
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-envector-chart-envector-compute-license
       - equal:
-          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.key
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.key
           value: token.jwt
       - exists:
-          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
 
   - it: injects env only when mountAsFile is false
     set:
-      es2c.license.injectAsEnv: true
-      es2c.license.mountAsFile: false
-      es2c.license.token: "dummy-token"
-    template: templates/es2c-deployment.yaml
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
+      compute.license.token: "dummy-token"
+    template: templates/compute-deployment.yaml
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
-          value: RELEASE-NAME-es2-chart-es2c-license
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-envector-chart-envector-compute-license
       - notExists:
-          path: spec.template.spec.volumes[?(@.name=="es2c-license")]
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
 
-  - it: configmap omits ES2_LICENSE_TOKEN when mountAsFile is false
+  - it: configmap omits ENVECTOR_LICENSE_TOKEN when mountAsFile is false
     set:
-      es2c.license.mountAsFile: false
-      es2c.license.createSecret: false
+      compute.license.mountAsFile: false
+      compute.license.createSecret: false
     template: templates/configmap.yaml
-    documentIndex: 3 # es2c configmap
+    documentIndex: 3 # compute configmap
     asserts:
       - notExists:
-          path: data.ES2_LICENSE_TOKEN
+          path: data.ENVECTOR_LICENSE_TOKEN
 
   - it: renders secret with provided token when createSecret is used
     set:
-      es2c.license.token: "dummy-token"
-    template: templates/es2c-license-secret.yaml
+      compute.license.token: "dummy-token"
+    template: templates/compute-license-secret.yaml
     asserts:
       - equal:
           path: stringData["token.jwt"]
@@ -63,17 +63,17 @@ tests:
 
   - it: uses existingSecret name in deployment mounts and env
     set:
-      es2c.license.existingSecret: my-license
-      es2c.license.injectAsEnv: true
-      es2c.license.mountAsFile: true
-      es2c.license.token: "dummy-token"
-    template: templates/es2c-deployment.yaml
+      compute.license.existingSecret: my-license
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: true
+      compute.license.token: "dummy-token"
+    template: templates/compute-deployment.yaml
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[?(@.name=="ES2_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
           value: my-license
       - equal:
-          path: spec.template.spec.volumes[?(@.name=="es2c-license")].secret.secretName
+          path: spec.template.spec.volumes[?(@.name=="compute-license")].secret.secretName
           value: my-license
 
   - it: renders ExternalSecret with AWS SM fields when enabled
@@ -86,8 +86,8 @@ tests:
       externalSecrets.license.remoteRef.version: AWSCURRENT
       externalSecrets.license.remoteRef.decodingStrategy: Base64
       externalSecrets.license.remoteRef.metadataPolicy: Fetch
-      es2c.license.injectAsEnv: true
-      es2c.license.mountAsFile: false
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
     template: templates/externalsecret-license.yaml
     asserts:
       - equal:
@@ -114,8 +114,8 @@ tests:
       externalSecrets.license.secretStoreRef.name: sm-store
       externalSecrets.license.secretStoreRef.kind: SecretStore
       externalSecrets.license.remoteRef.key: prod/license
-      es2c.license.injectAsEnv: true
-      es2c.license.mountAsFile: false
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
     template: templates/externalsecret-license.yaml
     asserts:
       - equal:

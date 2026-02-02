@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.backend.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.backendName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.backend.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and (not .Values.externalSecrets.dbSecret.enabled) (eq (.Values.existingSecrets.dbSecret | default "") "") }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if and (not .Values.externalSecrets.storageSecret.enabled) (eq (.Values.existingSecrets.storageSecret | default "") "") }}
+        checksum/secret-storage: {{ include (print $.Template.BasePath "/secret-storage.yaml") . | sha256sum }}
+        {{- end }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.backendName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.backend.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.backend.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.backend.affinity }}
+      affinity:
+        {{- toYaml .Values.backend.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml .Values.backend.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.backendName" . }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port | default 50051 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}-config
+            - secretRef:
+                name: {{ include "envector-chart.dbSecretName" . }}
+            - secretRef:
+                name: {{ include "envector-chart.storageSecretName" . }}
+          env:
+            - name: ENVECTOR_BACKEND_PORT
+              value: {{ .Values.backend.service.port | default 50051 | quote }}
+            - name: ENVECTOR_ORCHESTRATOR_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}:{{ .Values.orchestrator.service.port | default 25121 }}"
+          {{- if .Values.backend.resources }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- end }}
