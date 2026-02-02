@@ -201,7 +201,7 @@ keygen = KeyGenerator("./keys/my_key")
 keygen.generate_keys()
 
 # Create cipher for encryption/decryption
-cipher = Cipher(dim=512, enc_key_path="./keys/my_key/EncKey.bin")
+cipher = Cipher(dim=512, enc_key_path="./keys/my_key/EncKey.json")
 ```
 
 
