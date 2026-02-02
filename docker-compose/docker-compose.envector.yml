@@ -1,72 +1,101 @@
 # docker-compose.envector.yml
 services:
-  es2e:
-    image: "${ES2E_IMAGE_NAME:-es2e}:${ES2E_TAG:-latest}"
+  envector-endpoint:
+    image: "${ENVECTOR_ENDPOINT_IMAGE_NAME:-envector-endpoint}:${ENVECTOR_ENDPOINT_TAG:-latest}"
     pull_policy: "${PULL_POLICY:-always}"
     ports:
-      - ${ES2E_HOST_PORT:-50050}:${ES2E_PORT:-50050}
+      - ${ENVECTOR_ENDPOINT_HOST_PORT:-50050}:${ENVECTOR_ENDPOINT_PORT:-50050}
     environment:
-      ES2B_ADDR: "es2b:${ES2B_PORT:-50051}"
-      ES2E_PORT: "${ES2E_PORT:-50050}"
-      ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
-      ES2E_HOST_PORT: "${ES2E_HOST_PORT:-50050}"
+      ENVECTOR_BACKEND_ADDR: "envector-backend:${ENVECTOR_BACKEND_PORT:-50051}"
+      ENVECTOR_ENDPOINT_PORT: "${ENVECTOR_ENDPOINT_PORT:-50050}"
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
+      ENVECTOR_ENDPOINT_HOST_PORT: "${ENVECTOR_ENDPOINT_HOST_PORT:-50050}"
+      AUDIT_LOG_DIR: "${AUDIT_LOG_DIR:-/var/log/envector/audit}"
+      AUDIT_LOG_INCLUDE_IDENTITY_CLAIMS: "${AUDIT_LOG_INCLUDE_IDENTITY_CLAIMS:-false}"
+    # Optional: persist audit logs to the host for local development.
+    # volumes:
+    #   - "./audit:${AUDIT_LOG_DIR:-/var/log/envector/audit}"
     depends_on:
-      - "es2b"
+      - "envector-backend"
     restart: always
 
-  es2b:
-    image: "${ES2B_IMAGE_NAME:-es2b}:${ES2B_TAG:-latest}"
+  envector-shaper:
+    image: "${ENVECTOR_SHAPER_IMAGE_NAME:-envector-shaper}:${ENVECTOR_SHAPER_TAG:-latest}"
     pull_policy: "${PULL_POLICY:-always}"
     environment:
-      ES2B_PORT: "${ES2B_PORT:-50051}"
-      ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
-      ES2_DB_SERVICE_URL: "postgresql://${ES2_DB_SERVICE_USER:-myuser}:${ES2_DB_SERVICE_PASSWORD:-.}@metadatadb:${ES2_DB_SERVICE_PORT:-5432}/${ES2_DB_SERVICE_NAME:-mydatabase}?sslmode=${ES2_DB_SERVICE_SSL:-disable}"
-      ES2_STORAGE_PROVIDER: "${ES2_STORAGE_PROVIDER:-s3}"
-      ES2_STORAGE_SERVICE_ADDRESS: "storage:${ES2_STORAGE_SERVICE_PORT:-59000}"
-      ES2_STORAGE_SERVICE_USER: "${ES2_STORAGE_SERVICE_USER:-minioadmin}"
-      ES2_STORAGE_SERVICE_PASSWORD: "${ES2_STORAGE_SERVICE_PASSWORD:-.}"
-      ES2_STORAGE_SECURE: "${ES2_STORAGE_SECURE:-false}"
-      ES2_STORAGE_BUCKET_NAME: "${ES2_STORAGE_BUCKET_NAME:-es2}"
-      ES2_STORAGE_SERVICE_CREATE_BUCKET: "${ES2_STORAGE_SERVICE_CREATE_BUCKET:-true}"
-      ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: "${ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT:-true}"
-      ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
-      ES2_MAX_NUM_VECTORS_PER_SHARD: "${ES2_MAX_NUM_VECTORS_PER_SHARD:-4096}"
+      # Limit glibc malloc arenas to prevent memory retention (default: 8 * num_cpus)
+      MALLOC_ARENA_MAX: "2"
+      ENVECTOR_SHAPER_PORT: "${ENVECTOR_SHAPER_PORT:-50056}"
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_ES2_LOG_LEVEL:-INFO}"
+      # Storage
+      ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
+      ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
+      ENVECTOR_STORAGE_USER: "${ENVECTOR_STORAGE_USER:-minioadmin}"
+      ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_STORAGE_PASSWORD:-.}"
+      ENVECTOR_STORAGE_SECURE: "${ENVECTOR_STORAGE_SECURE:-false}"
+      ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_STORAGE_BUCKET_NAME:-envector}"
+      ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+    # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
+    volumes:
+      - ./token.jwt:/envector/license/token.jwt
     restart: always
 
-  es2o:
-    image: "${ES2O_IMAGE_NAME:-es2o}:${ES2O_TAG:-latest}"
+  envector-backend:
+    image: "${ENVECTOR_BACKEND_IMAGE_NAME:-envector-backend}:${ENVECTOR_BACKEND_TAG:-latest}"
     pull_policy: "${PULL_POLICY:-always}"
     environment:
-      ES2O_PORT: "${ES2O_PORT:-25121}"
-      ES2_LOG_LEVEL: "${ES2_LOG_LEVEL:-INFO}"
+      ENVECTOR_BACKEND_PORT: "${ENVECTOR_BACKEND_PORT:-50051}"
+      ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
+      ENVECTOR_SHAPER_ADDRESS: "envector-shaper:${ENVECTOR_SHAPER_PORT:-50056}"
+      ENVECTOR_DB_URL: "postgresql://${ENVECTOR_DB_USER:-postgres}:${ENVECTOR_DB_PASSWORD:-.}@metadatadb:${ENVECTOR_DB_PORT:-5432}/${ENVECTOR_DB_NAME:-mydatabase}?sslmode=${ENVECTOR_DB_SSL:-disable}"
+      ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
+      ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
+      ENVECTOR_STORAGE_USER: "${ENVECTOR_STORAGE_USER:-minioadmin}"
+      ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_STORAGE_PASSWORD:-.}"
+      ENVECTOR_STORAGE_SECURE: "${ENVECTOR_STORAGE_SECURE:-false}"
+      ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_STORAGE_BUCKET_NAME:-envector}"
+      ENVECTOR_STORAGE_CREATE_BUCKET: "${ENVECTOR_STORAGE_CREATE_BUCKET:-true}"
+      ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: "${ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT:-true}"
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
+      ENVECTOR_MAX_NUM_VECTORS_PER_SHARD: "${ENVECTOR_MAX_NUM_VECTORS_PER_SHARD:-4096}"
+    restart: always
+    depends_on:
+      - envector-shaper
+
+  envector-orchestrator:
+    image: "${ENVECTOR_ORCHESTRATOR_IMAGE_NAME:-envector-orchestrator}:${ENVECTOR_ORCHESTRATOR_TAG:-latest}"
+    pull_policy: "${PULL_POLICY:-always}"
+    environment:
+      ENVECTOR_ORCHESTRATOR_PORT: "${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
+      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       # Orchestrator DB
-      ES2_DB_SERVICE_URL: "postgresql://${ES2_DB_SERVICE_USER:-myuser}:${ES2_DB_SERVICE_PASSWORD:-.}@metadatadb:${ES2_DB_SERVICE_PORT:-5432}/${ES2_DB_SERVICE_NAME:-mydatabase}?sslmode=${ES2_DB_SERVICE_SSL:-disable}"
+      ENVECTOR_DB_URL: "postgresql://${ENVECTOR_DB_USER:-postgres}:${ENVECTOR_DB_PASSWORD:-.}@metadatadb:${ENVECTOR_DB_PORT:-5432}/${ENVECTOR_DB_NAME:-mydatabase}?sslmode=${ENVECTOR_DB_SSL:-disable}"
       # Orchestrator Storage
-      ES2_STORAGE_PROVIDER: "${ES2_STORAGE_PROVIDER:-s3}"
-      ES2_STORAGE_SERVICE_ADDRESS: "storage:${ES2_STORAGE_SERVICE_PORT:-59000}"
-      ES2_STORAGE_SERVICE_USER: "${ES2_STORAGE_SERVICE_USER:-minioadmin}"
-      ES2_STORAGE_SERVICE_PASSWORD: "${ES2_STORAGE_SERVICE_PASSWORD:-.}"
-      ES2_STORAGE_SECURE: "${ES2_STORAGE_SECURE:-false}"
-      ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: "${ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT:-true}"
-      ES2_STORAGE_BUCKET_NAME: "${ES2_STORAGE_BUCKET_NAME:-es2}"
+      ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
+      ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
+      ENVECTOR_STORAGE_USER: "${ENVECTOR_STORAGE_USER:-minioadmin}"
+      ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_STORAGE_PASSWORD:-.}"
+      ENVECTOR_STORAGE_SECURE: "${ENVECTOR_STORAGE_SECURE:-false}"
+      ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: "${ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT:-true}"
+      ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_STORAGE_BUCKET_NAME:-envector}"
     restart: always
 
-  es2c:
-    image: "${ES2C_IMAGE_NAME:-es2c}:${ES2C_TAG:-latest}"
+  envector-compute:
+    image: "${ENVECTOR_COMPUTE_IMAGE_NAME:-envector-compute}:${ENVECTOR_COMPUTE_TAG:-latest}"
     pull_policy: "${PULL_POLICY:-always}"
     command: []
     environment:
       USE_GPU: "false"
-      ES2C_PORT: "${ES2C_PORT:-25123}"
-      ES2_LOG_LEVEL: DEBUG
-      # ES2C_HOST: "${ES2C_HOST:-0.0.0.0}"
-      ES2O_ADDRESS: "es2o:${ES2O_PORT:-25121}"
-      ES2_THREAD_POOL_SCALE: "${ES2_THREAD_POOL_SCALE:-4}"
-      ES2C_NUM_SEARCH_HANDLER: "${ES2C_NUM_SEARCH_HANDLER:-10}"
-      ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
+      ENVECTOR_COMPUTE_PORT: "${ENVECTOR_COMPUTE_PORT:-25123}"
+      ENVECTOR_LOG_LEVEL: DEBUG
+      ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
+      ENVECTOR_THREAD_POOL_SCALE: "${ENVECTOR_THREAD_POOL_SCALE:-4}"
+      ENVECTOR_NUM_SEARCH_HANDLER: "${ENVECTOR_NUM_SEARCH_HANDLER:-10}"
+      ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+      NUM_SEARCH_WORKERS: "30"
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
-      - ./token.jwt:/es2/license/token.jwt
+      - ./token.jwt:/envector/license/token.jwt
     # deploy:
     #   resources:
     #     limits:
@@ -77,7 +106,7 @@ services:
     #       memory: 16G
     restart: always
     depends_on:
-      - "es2o"
+      - "envector-orchestrator"
 
 networks:
   default:

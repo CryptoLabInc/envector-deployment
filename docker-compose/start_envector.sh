@@ -17,8 +17,8 @@ Options:
   --env-file FILE        Env file path (default: pwd/.env or override)
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
-  --num-es2c N           Number of compute workers (CPU: scales es2c, GPU: enables up to N GPUs)
-  --num-es2o N           Number of orchestrator
+  --num-compute N        Number of compute workers (CPU: scales envector-compute, GPU: enables up to N GPUs)
+  --num-orchestrator N   Number of orchestrator workers (scales envector-orchestrator)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
   --down-volumes         When used with --down, also remove named/anonymous volumes (-v)
@@ -27,8 +27,8 @@ Options:
   -h, --help             Show this help and exit
 
 Examples (run from this directory):
-  ./start_envector.sh --gpu --set ES2E_HOST_PORT=50055 --set VERSION_TAG=dev
-  ./start_envector.sh --num-es2c 4
+  ./start_envector.sh --gpu --set ENVECTOR_ENDPOINT_HOST_PORT=50055 --set VERSION_TAG=dev
+  ./start_envector.sh --num-compute 4
   ./start_envector.sh --down
   ./start_envector.sh --config
 USAGE
@@ -63,8 +63,8 @@ GPU=false
 PROJECT=""
 DOWN=false
 DRY_RUN=false
-NUM_ES2C=1
-NUM_ES2O=1
+NUM_COMPUTE=1
+NUM_ORCHESTRATOR=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
@@ -102,7 +102,7 @@ ensure_license() {
     return 0
   fi
   echo "License file not found at Docker-mounted path: ${token_path}"
-  read -rp "Enter path to your ES2 license token.jwt: " src
+  read -rp "Enter path to your enVector license token.jwt: " src
   if [[ -z "${src}" || ! -f "${src}" ]]; then
     echo "License file not found: ${src:-<empty>}" >&2
     exit 1
@@ -139,7 +139,7 @@ check_or_login_dockerhub() {
     return 0
   fi
   local tag_for_check=${1:-latest}
-  local image="cryptolabinc/es2e:${tag_for_check}"
+  local image="cryptolabinc/envector-endpoint:${tag_for_check}"
   echo "Checking Docker Hub access for ${image} ... (this may take a few seconds)"
   if docker manifest inspect "${image}" >/dev/null 2>&1; then
     echo "Docker Hub access succeeded."
@@ -176,18 +176,18 @@ while (($#)); do
     -p|--project)
       [[ $# -ge 2 ]] || { echo "--project requires a value" >&2; exit 1; }
       PROJECT="$2"; shift 2 ;;
-    --num-es2c)
-      [[ $# -ge 2 ]] || { echo "--num-es2c requires a number" >&2; exit 1; }
+    --num-compute|--num-es2c)
+      [[ $# -ge 2 ]] || { echo "--num-compute requires a number" >&2; exit 1; }
       if ! [[ "$2" =~ ^[0-9]+$ ]]; then
-        echo "--num-es2c must be an integer" >&2; exit 1;
+        echo "--num-compute must be an integer" >&2; exit 1;
       fi
-      NUM_ES2C="$2"; shift 2 ;;
-    --num-es2o)
-      [[ $# -ge 2 ]] || { echo "--num-es2o requires a number" >&2; exit 1; }
+      NUM_COMPUTE="$2"; shift 2 ;;
+    --num-orchestrator|--num-es2o)
+      [[ $# -ge 2 ]] || { echo "--num-orchestrator requires a number" >&2; exit 1; }
       if ! [[ "$2" =~ ^[0-9]+$ ]]; then
-        echo "--num-es2o must be an integer" >&2; exit 1;
+        echo "--num-orchestrator must be an integer" >&2; exit 1;
       fi
-      NUM_ES2O="$2"; shift 2 ;;
+      NUM_ORCHESTRATOR="$2"; shift 2 ;;
     --set)
       [[ $# -ge 2 ]] || { echo "--set requires KEY=VAL" >&2; exit 1; }
       ENV_OVERRIDES+=("$2"); shift 2 ;;
@@ -305,10 +305,10 @@ if "$GPU"; then
       cmd+=( --profile "gpu${i}" )
     done
   else
-    if (( NUM_ES2C > 1 )); then
-      max_extra=$(( NUM_ES2C - 1 ))
+    if (( NUM_COMPUTE > 1 )); then
+      max_extra=$(( NUM_COMPUTE - 1 ))
       if (( max_extra > 3 )); then
-        echo "Requested --num-es2c=$NUM_ES2C exceeds default GPU services (max 4). Enabling 4. Update compose files to extend." >&2
+        echo "Requested --num-compute=$NUM_COMPUTE exceeds default GPU services (max 4). Enabling 4. Update compose files to extend." >&2
         max_extra=3
       fi
       for i in $(seq 1 "$max_extra"); do
@@ -330,11 +330,11 @@ elif "$CONFIG_MODE"; then
   cmd+=( config )
 else
   cmd+=( up -d )
-  if ! "$GPU" && (( NUM_ES2C > 1 )); then
-    cmd+=( --scale "es2c=${NUM_ES2C}" )
+  if ! "$GPU" && (( NUM_COMPUTE > 1 )); then
+    cmd+=( --scale "envector-compute=${NUM_COMPUTE}" )
   fi
-  if (( NUM_ES2O > 1 )); then
-    cmd+=( --scale "es2o=${NUM_ES2O}" )
+  if (( NUM_ORCHESTRATOR > 1 )); then
+    cmd+=( --scale "envector-orchestrator=${NUM_ORCHESTRATOR}" )
   fi
 fi
 
@@ -372,8 +372,8 @@ if ! "$DOWN" && ! "$CONFIG_MODE"; then
   if [[ -n "$PROJECT" ]]; then
     log_cmd+=( -p "$PROJECT" )
   fi
-  if "$GPU" && (( NUM_ES2C > 1 )); then
-    max_extra=$(( NUM_ES2C - 1 ))
+  if "$GPU" && (( NUM_COMPUTE > 1 )); then
+    max_extra=$(( NUM_COMPUTE - 1 ))
     (( max_extra > 3 )) && max_extra=3
     for i in $(seq 1 "$max_extra"); do
       log_cmd+=( --profile "gpu${i}" )
@@ -386,7 +386,11 @@ if ! "$DOWN" && ! "$CONFIG_MODE"; then
         export "$kv"
       done
     fi
-    "${log_cmd[@]}" logs -f >"$LOG_FILE" 2>&1 &
+    "${log_cmd[@]}" logs -f --no-color 2>&1 \
+      | tr -d $'\000' \
+      | tr $'\r' $'\n' \
+      | sed -u -e $'s/\x1b\\[[0-9;]*[A-Za-z]//g' \
+      >"$LOG_FILE" &
   )
   echo "Logging to: $LOG_FILE"
 fi
