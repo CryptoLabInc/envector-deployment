@@ -35,6 +35,8 @@ services:
       ENVECTOR_STORAGE_SECURE: "${ENVECTOR_STORAGE_SECURE:-false}"
       ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_STORAGE_BUCKET_NAME:-envector}"
       ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+      ENVECTOR_SHAPER_MAX_WORKERS: "${ENVECTOR_SHAPER_MAX_WORKERS:-16}"
+
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
       - ./token.jwt:/envector/license/token.jwt
