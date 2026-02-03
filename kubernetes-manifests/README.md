@@ -1,5 +1,8 @@
 # enVector Self-Hosted Helm Chart Deployment Guide
 
+## Version Compatibility
+- **Note:** The Helm chart is not supported in version `1.3.0-alpha.1`. Please use a compatible version.
+
 ## Prerequisites
 - External PostgreSQL database and storage must be running and accessible.
 - If using a private registry, create the imagePullSecret (regcred):
@@ -34,27 +37,27 @@ externalSecrets:
   dbSecret:
     enabled: true
     data:
-      - secretKey: ES2_DB_SERVICE_URL
+      - secretKey: ENVECTOR_DB_URL
         remoteRef:
           key: prod/app/db
           property: db_url
   storageSecret:
     enabled: true
     data:
-      - secretKey: ES2_STORAGE_SERVICE_USER
+      - secretKey: ENVECTOR_STORAGE_USER
         remoteRef: { key: prod/minio, property: accessKey }
-      - secretKey: ES2_STORAGE_SERVICE_PASSWORD
+      - secretKey: ENVECTOR_STORAGE_PASSWORD
         remoteRef: { key: prod/minio, property: secretKey }
   license:
     enabled: true
     remoteRef:
-      key: prod/es2/license
+      key: prod/envector/license
       property: token.jwt
 ```
 
 Notes:
 - When `externalSecrets.enabled=true`, the chart stops rendering sensitive values into ConfigMaps and instead injects them from Secrets created by ESO.
-- License: with `externalSecrets.enabled=true`, the chart will not create the license Secret itself. Provide `externalSecrets.license.remoteRef` (recommended) or set `es2c.license.existingSecret`.
+- License: with `externalSecrets.enabled=true`, the chart will not create the license Secret itself. Provide `externalSecrets.license.remoteRef` (recommended) or set `compute.license.existingSecret`.
 - Need different backends (e.g., DB/storage from Parameter Store, license from Secrets Manager)? Set `externalSecrets.<name>.secretStoreRef` inside each block; otherwise every block falls back to the global `secretStoreRef` above.
 
 ### License secret management
@@ -63,9 +66,9 @@ Notes:
 - First install with token file (auto-create Secret):
   ```sh
   helm install envector ./helm \
-    --set es2c.license.enabled=true \
-    --set es2c.license.createSecret=true \
-    --set-file es2c.license.token=./token.jwt
+    --set compute.license.enabled=true \
+    --set compute.license.createSecret=true \
+    --set-file compute.license.token=./token.jwt
   ```
 - Upgrade reusing existing Secret (no flag needed):
   ```sh
@@ -73,17 +76,17 @@ Notes:
   ```
 - Upgrade replacing token (Secret updated):
   ```sh
-  helm upgrade envector ./helm --set-file es2c.license.token=./new-token.jwt
+  helm upgrade envector ./helm --set-file compute.license.token=./new-token.jwt
   ```
 - Use an external Secret (skip creation):
   ```sh
   helm upgrade envector ./helm \
-    --set es2c.license.existingSecret=my-license \
-    --set es2c.license.createSecret=false
+    --set compute.license.existingSecret=my-license \
+    --set compute.license.createSecret=false
   ```
 - If using an external Secret and you want to force a rollout after updating it, bump:
   ```sh
-  --set es2c.license.secret.checksum=$(sha256sum token.jwt | cut -d ' ' -f1)
+  --set compute.license.secret.checksum=$(sha256sum token.jwt | cut -d ' ' -f1)
   ```
 
 ## Uninstallation
@@ -152,7 +155,7 @@ ingress:
         - path: /
           pathType: Prefix
           service:
-            name: es2e
+            name: endpoint
             port: 50050
   tls:
     - secretName: app-tls
@@ -189,7 +192,7 @@ ingress:
         - path: /
           pathType: Prefix
           service:
-            name: es2e
+            name: endpoint
             port: 50050
   tls:
     - secretName: app-tls
@@ -215,6 +218,6 @@ Troubleshooting checklist
 - Node clock skew: causes ACME errors → sync with NTP
 
 ## Notes
-- es2b waits for external storage and es2c to be reachable before starting.
-- es2e waits for es2b and es2o to be reachable before starting.
-- es2c mounts a license token from a Secret at `/es2/license` (license is enabled by default). The chart creates the Secret on first install when a token is provided, reuses it on upgrade, and replaces it if a new token is supplied.
+- backend waits for external storage and compute to be reachable before starting.
+- endpoint waits for backend and orchestrator to be reachable before starting.
+- compute mounts a license token from a Secret at `/envector/license` (license is enabled by default). The chart creates the Secret on first install when a token is provided, reuses it on upgrade, and replaces it if a new token is supplied.

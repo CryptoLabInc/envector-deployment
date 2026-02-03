@@ -5,19 +5,19 @@
 The default tags come from `.env.example`:
 
 ```text
-es2e:     cryptolabinc/es2e:${VERSION_TAG}
-es2b:     cryptolabinc/es2b:${VERSION_TAG}
-es2o:     cryptolabinc/es2o:${VERSION_TAG}
-es2c:     cryptolabinc/es2c:${VERSION_TAG}
-postgres: postgres:14.9
-minio:    minio/minio:RELEASE.2023-03-20T20-16-18Z
+envector-endpoint:      cryptolabinc/envector-endpoint:${VERSION_TAG}
+envector-backend:       cryptolabinc/envector-backend:${VERSION_TAG}
+envector-orchestrator:  cryptolabinc/envector-orchestrator:${VERSION_TAG}
+envector-compute:       cryptolabinc/envector-compute:${VERSION_TAG}
+postgres:               postgres:14.9
+minio:                  minio/minio:RELEASE.2023-03-20T20-16-18Z
 ```
 
 ## 🧩 Compose File Layout
 
 ```text
 docker-compose.envector.yml    # Core application services
-docker-compose.gpu.yml         # GPU override for es2c
+docker-compose.gpu.yml         # GPU override for compute
 docker-compose.infra.yml       # Postgres + MinIO (adds readiness deps to core)
 ```
 
@@ -51,20 +51,20 @@ Edit `.env` as needed. `COMPOSE_PROJECT_NAME` customises the network/container p
 
 ## 🔐 License Token
 
-- Docker-mounted path: the container reads the token at `/es2/license/token.jwt` (source file on host: `docker-compose/token.jwt`).
+- Docker-mounted path: the container reads the token at `/envector/license/token.jwt` (source file on host: `docker-compose/token.jwt`).
 - If `token.jwt` is missing, `./start_envector.sh` will prompt for a path and copy the file to `docker-compose/token.jwt` automatically.
-- The `es2c` service reads the token from the Docker-mounted path `/es2/license/token.jwt`; the compose file mounts it for you:
+- The `envector-compute` service reads the token from the Docker-mounted path `/envector/license/token.jwt`; the compose file mounts it for you:
 
 ```yaml
 environment:
-  ES2_LICENSE_TOKEN: "${ES2_LICENSE_TOKEN:-/es2/license/token.jwt}"
+  ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
 # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
 volumes:
-  - ./token.jwt:/es2/license/token.jwt
+  - ./token.jwt:/envector/license/token.jwt
 ```
 
-- You normally don’t need to set `ES2_LICENSE_TOKEN` in `.env`; it matches the Docker-mounted path above.
-- If you change the token filename or path, update both `ES2_LICENSE_TOKEN` and the `volumes` mapping in `docker-compose/docker-compose.envector.yml` accordingly.
+- You normally don’t need to set `ENVECTOR_LICENSE_TOKEN` in `.env`; it matches the Docker-mounted path above.
+- If you change the token filename or path, update both `ENVECTOR_LICENSE_TOKEN` and the `volumes` mapping in `docker-compose/docker-compose.envector.yml` accordingly.
 
 ---
 
@@ -83,18 +83,18 @@ Recommended (helper script in this directory):
 ./start_envector.sh --gpu
 
 # Scale workers
-./start_envector.sh --num-es2c 4          # CPU-only: scale es2c=4
-./start_envector.sh --gpu --num-es2c 2    # GPU: gpu0 + gpu1
+./start_envector.sh --num-compute 4          # CPU-only: scale compute=4
+./start_envector.sh --gpu --num-compute 2    # GPU: gpu0 + gpu1
 
 # Project/env/log options
-./start_envector.sh -p my-es2 --env-file ./.env --log-file ./docker-logs.log
+./start_envector.sh -p my-envector --env-file ./.env --log-file ./docker-logs.log
 
 # Inline env overrides (higher precedence than .env)
-./start_envector.sh ES2E_HOST_PORT=50055 VERSION_TAG=dev
+./start_envector.sh ENVECTOR_ENDPOINT_HOST_PORT=50055 VERSION_TAG=dev
 
 # Stop the stack (use -p if you set a project)
 ./start_envector.sh --down    # also tears down GPU services automatically
-# e.g., ./start_envector.sh -p my-es2 --down
+# e.g., ./start_envector.sh -p my-envector --down
 # Remove volumes as well when stopping
 ./start_envector.sh --down --down-volumes
 ```
@@ -133,8 +133,8 @@ docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml --env-
 ```
 
 Notes on scaling
-- CPU-only: `--scale es2c=N` (manual) or `./start_envector.sh --num-es2c N` (script).
-- GPU: `./start_envector.sh --gpu --num-es2c N` enables N GPU workers (base gpu0 plus additional).
+- CPU-only: `--scale compute=N` (manual) or `./start_envector.sh --num-compute N` (script).
+- GPU: `./start_envector.sh --gpu --num-compute N` enables N GPU workers (base gpu0 plus additional).
   Extend beyond 4 GPUs by editing `docker-compose.gpu.yml`.
 
 ---

@@ -1,7 +1,7 @@
 # enVector - Encrypted Vector Search
 
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/es2)](https://pypi.org/project/es2/)
+[![PyPI](https://img.shields.io/pypi/v/pyenvector)](https://pypi.org/project/pyenvector/)
 [![Docker](https://img.shields.io/badge/docker-private-blue.svg)](https://www.docker.com/)
 [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-blue.svg)](https://kubernetes.io/)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
@@ -46,10 +46,10 @@
 
 enVector consists of four main microservices:
 
-- **es2e (Endpoint)**: Main API gateway and client interface
-- **es2b (Backend)**: Service orchestration and metadata management
-- **es2o (Orchestrator)**: Manages and schedules compute requests
-- **es2c (Compute)**: Executes vector search and similarity computations
+- **Endpoint**: Main API gateway and client interface
+- **Backend**: Service orchestration and metadata management
+- **Orchestrator**: Manages and schedules compute requests
+- **Compute**: Executes vector search and similarity computations
 
 ### Infrastructure Dependencies
 
@@ -63,8 +63,8 @@ envector-deployment/
 ├── docker-compose/                  # Docker Compose deployment
 │   ├── docker-compose.envector.yml  # Core application services
 │   ├── docker-compose.infra.yml     # Postgres + MinIO (adds readiness deps to core)
-│   ├── docker-compose.gpu.yml       # GPU override for es2c
-│   ├── .env.example                 # environment variables for es2
+│   ├── docker-compose.gpu.yml       # GPU override for compute
+│   ├── .env.example                 # environment variables for envector
 │   ├── start_envector.sh            # easy-to-use helper script
 │   └── README.md                    # Docker setup guide
 ├── kubernetes-manifests/            # Kubernetes deployment
@@ -140,12 +140,12 @@ kubectl get svc
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ES2E_TAG` | es2e service image tag | `latest` |
-| `ES2B_TAG` | es2b service image tag | `latest` |
-| `ES2O_TAG` | es2o service image tag | `latest` |
-| `ES2C_TAG` | es2c service image tag | `latest` |
-| `ES2_LOG_LEVEL` | Logging level | `INFO` |
-| `ES2E_HOST_PORT` | es2e external port | `50050` |
+| `ENVECTOR_ENDPOINT_TAG` | endpoint service image tag | `latest` |
+| `ENVECTOR_BACKEND_TAG` | backend service image tag | `latest` |
+| `ENVECTOR_ORCHESTRATOR_TAG` | orchestrator service image tag | `latest` |
+| `ENVECTOR_COMPUTE_TAG` | compute service image tag | `latest` |
+| `ENVECTOR_LOG_LEVEL` | Logging level | `INFO` |
+| `ENVECTOR_ENDPOINT_HOST_PORT` | endpoint external port | `50050` |
 
 ### Helm Values
 
@@ -161,16 +161,16 @@ Edit `kubernetes-manifests/helm/values.yaml` to customize:
 * OS: Linux/macOS 11.0+
 
 ```bash
-pip install es2
+pip install pyenvector
 ```
 
 ### Basic Setup
 
 ```python
-import es2
+import pyenvector as ev
 
 # Initialize connection
-es2.init(
+ev.init(
     host="localhost",
     port=50050,
     key_path="./keys",
@@ -178,7 +178,7 @@ es2.init(
 )
 
 # Create index
-index = es2.create_index("my_index", dim=512)
+index = ev.create_index("my_index", dim=512)
 
 # Insert vectors
 vectors = [
@@ -194,7 +194,7 @@ results = index.search(vectors[0], top_k=5)
 ### Key Management
 
 ```python
-from es2.crypto import KeyGenerator, Cipher
+from pyenvector.crypto import KeyGenerator, Cipher
 
 # Generate FHE keys
 keygen = KeyGenerator("./keys/my_key")

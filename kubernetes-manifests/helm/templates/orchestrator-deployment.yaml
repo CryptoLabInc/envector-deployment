@@ -1,0 +1,107 @@
+# Headless service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}{{ .Values.orchestrator.service.headlessSuffix }}
+spec:
+  clusterIP: None # Headless service
+  ports:
+    - port: {{ .Values.orchestrator.service.port | default 25121 }}
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.orchestrator.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}{{ .Values.orchestrator.service.headlessSuffix }}
+  replicas: {{ .Values.orchestrator.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.orchestratorName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.orchestrator.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and (not .Values.externalSecrets.dbSecret.enabled) (eq (.Values.existingSecrets.dbSecret | default "") "") }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if and (not .Values.externalSecrets.storageSecret.enabled) (eq (.Values.existingSecrets.storageSecret | default "") "") }}
+        checksum/secret-storage: {{ include (print $.Template.BasePath "/secret-storage.yaml") . | sha256sum }}
+        {{- end }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.orchestratorName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.orchestrator.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.orchestrator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.orchestrator.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.orchestrator.affinity }}
+      affinity:
+        {{- toYaml .Values.orchestrator.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.orchestrator.tolerations }}
+      tolerations:
+        {{- toYaml .Values.orchestrator.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.orchestratorName" . }}
+          image: "{{ .Values.orchestrator.image.repository }}:{{ .Values.orchestrator.image.tag }}"
+          imagePullPolicy: {{ .Values.orchestrator.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.orchestrator.service.port | default 25121 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-config
+            - secretRef:
+                name: {{ include "envector-chart.dbSecretName" . }}
+            - secretRef:
+                name: {{ include "envector-chart.storageSecretName" . }}
+          env:
+            - name: ENVECTOR_ORCHESTRATOR_PORT
+              value: {{ .Values.orchestrator.service.port | default 25121 | quote }}
+            - name: ENVECTOR_ORCHESTRATOR_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name # "envector-orchestrator-0", "envector-orchestrator-1", ...
+            - name: ENVECTOR_ORCHESTRATOR_KUBE_SERVICE
+              value: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}{{ .Values.orchestrator.service.headlessSuffix }}
+            - name: ENVECTOR_ORCHESTRATOR_LOCK_ID
+              value: {{ .Values.orchestrator.election.lockID | quote }}
+          {{- if .Values.orchestrator.resources }}
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          {{- end }}
