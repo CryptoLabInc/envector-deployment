@@ -19,36 +19,12 @@ services:
       - "envector-backend"
     restart: always
 
-  envector-shaper:
-    image: "${ENVECTOR_SHAPER_IMAGE_NAME:-envector-shaper}:${ENVECTOR_SHAPER_TAG:-latest}"
-    pull_policy: "${PULL_POLICY:-always}"
-    environment:
-      # Limit glibc malloc arenas to prevent memory retention (default: 8 * num_cpus)
-      MALLOC_ARENA_MAX: "2"
-      ENVECTOR_SHAPER_PORT: "${ENVECTOR_SHAPER_PORT:-50056}"
-      ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
-      # Storage
-      ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
-      ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
-      ENVECTOR_STORAGE_USER: "${ENVECTOR_STORAGE_USER:-minioadmin}"
-      ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_STORAGE_PASSWORD:-.}"
-      ENVECTOR_STORAGE_SECURE: "${ENVECTOR_STORAGE_SECURE:-false}"
-      ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_STORAGE_BUCKET_NAME:-envector}"
-      ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
-      ENVECTOR_SHAPER_MAX_WORKERS: "${ENVECTOR_SHAPER_MAX_WORKERS:-16}"
-
-    # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
-    volumes:
-      - ./token.jwt:/envector/license/token.jwt
-    restart: always
-
   envector-backend:
     image: "${ENVECTOR_BACKEND_IMAGE_NAME:-envector-backend}:${ENVECTOR_BACKEND_TAG:-latest}"
     pull_policy: "${PULL_POLICY:-always}"
     environment:
       ENVECTOR_BACKEND_PORT: "${ENVECTOR_BACKEND_PORT:-50051}"
       ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
-      ENVECTOR_SHAPER_ADDRESS: "envector-shaper:${ENVECTOR_SHAPER_PORT:-50056}"
       ENVECTOR_DB_URL: "postgresql://${ENVECTOR_DB_USER:-postgres}:${ENVECTOR_DB_PASSWORD:-.}@metadatadb:${ENVECTOR_DB_PORT:-5432}/${ENVECTOR_DB_NAME:-mydatabase}?sslmode=${ENVECTOR_DB_SSL:-disable}"
       ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
       ENVECTOR_STORAGE_ADDRESS: "storage:${ENVECTOR_STORAGE_PORT:-59000}"
@@ -61,8 +37,6 @@ services:
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       ENVECTOR_MAX_NUM_VECTORS_PER_SHARD: "${ENVECTOR_MAX_NUM_VECTORS_PER_SHARD:-4096}"
     restart: always
-    depends_on:
-      - envector-shaper
 
   envector-orchestrator:
     image: "${ENVECTOR_ORCHESTRATOR_IMAGE_NAME:-envector-orchestrator}:${ENVECTOR_ORCHESTRATOR_TAG:-latest}"

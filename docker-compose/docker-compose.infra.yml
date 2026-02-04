@@ -46,10 +46,5 @@ services:
       metadatadb:
         condition: service_started
 
-  envector-shaper:
-    depends_on:
-      storage:
-        condition: service_healthy
-
 networks:
   default:
