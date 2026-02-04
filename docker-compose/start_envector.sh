@@ -253,13 +253,13 @@ fi
 if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN" && "$ENABLE_PREFLIGHTS"; then
   require_docker
   require_docker_compose_v2
-  probe_tag="${chosen_version:-${VERSION_TAG:-latest}}"
-  check_or_login_dockerhub "${probe_tag}"
-  ensure_license
   prompt_version_if_needed
   if ! "$has_inline_version" && [[ -n "$chosen_version" ]]; then
     ENV_OVERRIDES+=("VERSION_TAG=${chosen_version}")
   fi
+  probe_tag="${chosen_version:-${VERSION_TAG:-latest}}"
+  check_or_login_dockerhub "${probe_tag}"
+  ensure_license
 fi
 
 compose_args=(
