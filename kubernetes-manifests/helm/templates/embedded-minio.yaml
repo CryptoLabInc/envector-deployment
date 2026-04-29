@@ -1,0 +1,94 @@
+{{- if eq (toString .Values.embeddedMinio.enabled) "true" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-minio
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-minio
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: {{ .Values.embeddedMinio.rootUser | quote }}
+  MINIO_ROOT_PASSWORD: {{ .Values.embeddedMinio.rootPassword | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-minio
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-minio
+spec:
+  clusterIP: None
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-minio
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-minio
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-minio
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-embedded-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: embedded-minio
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: embedded-minio
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: "{{ .Values.embeddedMinio.image.repository }}:{{ .Values.embeddedMinio.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args: ["server", "/data"]
+          ports:
+            - containerPort: 9000
+          envFrom:
+            - secretRef:
+                name: {{ include "envector-chart.fullname" . }}-embedded-minio
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: minio-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.embeddedMinio.storage.size | default "20Gi" }}
+        {{- if .Values.embeddedMinio.storage.storageClassName }}
+        storageClassName: {{ .Values.embeddedMinio.storage.storageClassName | quote }}
+        {{- end }}
+{{- end }}

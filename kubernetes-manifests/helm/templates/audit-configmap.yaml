@@ -1,0 +1,117 @@
+{{- if .Values.audit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditName" . }}
+data:
+  ENVECTOR_AUDIT_PORT: {{ .Values.audit.service.port | default 50052 | quote }}
+  AUDIT_EXPORT_REQUIRE_PRINCIPAL: {{ .Values.audit.auth.requirePrincipal | default false | quote }}
+  ENVECTOR_AUDIT_AUTH_OIDC_ISSUER: {{ .Values.audit.auth.oidcIssuer | default "" | quote }}
+  ENVECTOR_AUDIT_AUTH_JWKS_URL: {{ .Values.audit.auth.jwksUrl | default "" | quote }}
+  ENVECTOR_AUDIT_AUTH_EXPECTED_ISSUER: {{ .Values.audit.auth.expectedIssuer | default "" | quote }}
+  ENVECTOR_AUDIT_AUTH_ALLOWED_AUDIENCES: {{ .Values.audit.auth.allowedAudiences | default "" | quote }}
+  # Kafka
+  ENVECTOR_AUDIT_KAFKA_BOOTSTRAP_SERVERS: "{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}:9092"
+  ENVECTOR_AUDIT_KAFKA_TOPIC: {{ .Values.audit.kafka.topic | default "envector.audit.events.v1" | quote }}
+  ENVECTOR_AUDIT_KAFKA_GROUP_ID: {{ .Values.audit.kafka.groupId | default "envector-audit-service" | quote }}
+  # Storage (reuses global storage settings, separate bucket)
+  ENVECTOR_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
+  {{- if ne (.Values.externalServices.storage.provider | default "s3") "gcs" }}
+  ENVECTOR_STORAGE_ADDRESS: {{ include "envector-chart.storageEndpoint" . | quote }}
+  ENVECTOR_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  {{- end }}
+  ENVECTOR_STORAGE_BUCKET_NAME: {{ .Values.audit.storage.bucketName | default "envector-audit" | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditName" . }}-vector-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditName" . }}-logagent
+data:
+  vector.yaml: |
+    data_dir: /vector-data-dir
+
+    sources:
+      audit_logs:
+        type: file
+        include:
+          - /var/log/envector/audit/*.jsonl
+        read_from: beginning
+        ignore_checkpoints: false
+
+    transforms:
+      parse_audit_json:
+        type: remap
+        inputs:
+          - audit_logs
+        source: |
+          parsed, err = parse_json(.message)
+          if err == null {
+            . = parsed
+          } else {
+            .raw_message = .message
+            .parse_error = to_string(err)
+          }
+          .collector = "vector"
+          .pipeline = "envector-audit"
+
+    sinks:
+      kafka:
+        type: kafka
+        inputs:
+          - parse_audit_json
+        bootstrap_servers: "{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}:9092"
+        topic: {{ .Values.audit.kafka.topic | default "envector.audit.events.v1" | quote }}
+        encoding:
+          codec: json
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}-init
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditLogmqName" . }}
+data:
+  redpanda-init.sh: |
+    #!/bin/sh
+    set -eu
+
+    KAFKA_PORT="9092"
+    KAFKA_TOPIC="{{ .Values.audit.kafka.topic | default "envector.audit.events.v1" }}"
+
+    "$@" &
+    REDPANDA_PID=$!
+
+    cleanup() {
+      kill -TERM "${REDPANDA_PID}" 2>/dev/null || true
+    }
+
+    trap cleanup INT TERM
+
+    attempts=30
+    i=1
+    while [ "${i}" -le "${attempts}" ]; do
+      if rpk cluster info --brokers "localhost:${KAFKA_PORT}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+      i=$((i + 1))
+    done
+
+    if [ "${i}" -gt "${attempts}" ]; then
+      echo "Timed out waiting for Redpanda to accept Kafka connections" >&2
+      wait "${REDPANDA_PID}"
+      exit 1
+    fi
+
+    rpk topic create "${KAFKA_TOPIC}" --brokers "localhost:${KAFKA_PORT}" >/dev/null 2>&1 || true
+
+    wait "${REDPANDA_PID}"
+{{- end }}

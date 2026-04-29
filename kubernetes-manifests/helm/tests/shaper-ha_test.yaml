@@ -1,0 +1,85 @@
+suite: shaper ha routing and readiness
+tests:
+  - it: uses pod-level readiness and pod uid env for shaper k8s lease ha
+    template: templates/shaper-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: k8s-lease
+      shaper.replicas: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POD_UID")].valueFrom.fieldRef.fieldPath
+          value: metadata.uid
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_HA_BACKEND")].value
+          value: k8s-lease
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_LEASE_DURATION_SECONDS")].value
+          value: "15"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_RENEW_DEADLINE_SECONDS")].value
+          value: "10"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_RETRY_PERIOD_SECONDS")].value
+          value: "2"
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/pod-ready
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 120
+      - matchRegex:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]
+          pattern: /health/drain
+
+  - it: selects only the active leader pod for the shaper service in ha mode
+    template: templates/service.yaml
+    documentIndex: 4
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: k8s-lease
+      shaper.replicas: 2
+    asserts:
+      - equal:
+          path: spec.selector["envector.ai/shaper-leader"]
+          value: "true"
+
+  - it: keeps the shaper service selector unchanged outside ha mode
+    template: templates/service.yaml
+    documentIndex: 4
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: ""
+      shaper.replicas: 1
+    asserts:
+      - notExists:
+          path: spec.selector["envector.ai/shaper-leader"]
+
+  - it: keeps leader-only readiness disabled outside ha mode
+    template: templates/shaper-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: ""
+      shaper.replicas: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/ready
+
+  - it: injects pod identity envs when shaper uses k8s lease without leader-only ha
+    template: templates/shaper-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: k8s-lease
+      shaper.replicas: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POD_NAME")].valueFrom.fieldRef.fieldPath
+          value: metadata.name
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_KUBE_POD_NAME")].valueFrom.fieldRef.fieldPath
+          value: metadata.name
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_HA_BACKEND")].value
+          value: k8s-lease

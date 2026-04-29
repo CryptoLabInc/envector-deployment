@@ -1,0 +1,11 @@
+crds:
+  enabled: true
+
+imageRegistry: registry.local:5000
+imageNamespace: jetstack
+
+global:
+  imagePullSecrets: []
+
+prometheus:
+  enabled: false

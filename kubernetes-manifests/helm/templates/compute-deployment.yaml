@@ -1,0 +1,280 @@
+{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.compute.service.port | default 25123 }}
+      targetPort: {{ .Values.compute.service.port | default 25123 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.compute.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- $defaultSecretName := printf "%s-%s-license" (include "envector-chart.fullname" .) (include "envector-chart.computeName" .) }}
+{{- $secretName := (coalesce .Values.compute.license.existingSecret (default $defaultSecretName .Values.compute.license.secret.name)) }}
+{{- $secretKey := (.Values.compute.license.secret.key | default "token.jwt") }}
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+  replicas: {{ .Values.compute.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.computeName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.compute.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.computeName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.compute.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.compute.license.enabled }}
+        # Rollout when license Secret manifest changes (created/updated by this chart)
+        checksum/compute-license: {{ include (print $.Template.BasePath "/compute-license-secret.yaml") . | sha256sum }}
+        {{- end }}
+        # Optional manual trigger when using an external Secret
+        {{- if and .Values.compute.license.enabled .Values.compute.license.existingSecret }}
+        checksum/external-compute-license: {{ .Values.compute.license.secret.checksum | default "" | quote }}
+        {{- end }}
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      terminationGracePeriodSeconds: {{ .Values.compute.terminationGracePeriodSeconds | default 120 }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.compute.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.compute.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.compute.affinity $computeLeaderOnlyHA }}
+      affinity:
+        {{- if .Values.compute.affinity }}
+        {{- toYaml .Values.compute.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "envector-chart.fullname" . }}
+                    component: {{ include "envector-chart.computeName" . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.compute.tolerations }}
+      tolerations:
+        {{- toYaml .Values.compute.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.computeName" . }}
+          {{- if eq .Values.compute.variant "gpu" }}
+          image: "{{ .Values.compute.image.repository }}:{{ .Values.compute.image.tag | default "latest" }}-gpu"
+          {{- else }}
+          image: "{{ .Values.compute.image.repository }}:{{ .Values.compute.image.tag | default "latest" }}"
+          {{ end }}
+          imagePullPolicy: {{ .Values.compute.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.compute.service.port | default 25123 }}
+            - name: http-health
+              containerPort: {{ .Values.compute.health.port }}
+          {{- if .Values.compute.health.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.compute.health.liveness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.compute.health.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.compute.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.compute.health.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.compute.health.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              {{- if $computeLeaderOnlyHA }}
+              path: /health/pod-ready
+              {{- else }}
+              path: {{ .Values.compute.health.readiness.path }}
+              {{- end }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.compute.health.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.compute.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.compute.health.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.compute.health.readiness.failureThreshold }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}-config
+            {{- if .Values.observability.enabled }}
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+            {{- end }}
+          env:
+            - name: ENVECTOR_COMPUTE_PORT
+              value: {{ .Values.compute.service.port | default 25123 | quote }}
+            - name: ENVECTOR_COMPUTE_HOST
+              value: {{ .Values.compute.env.host | default "0.0.0.0" | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: ENVECTOR_ORCHESTRATOR_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}:{{ .Values.orchestrator.service.port | default 25121 }}"
+            - name: ENVECTOR_COMPUTE_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ENVECTOR_COMPUTE_KUBE_SERVICE
+              value: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+            - name: ENVECTOR_COMPUTE_HA_BACKEND
+              value: {{ .Values.compute.election.backend | default "k8s-lease" | quote }}
+            - name: ENVECTOR_COMPUTE_LEASE_NAME
+              value: {{ .Values.compute.election.leaseName | default "envector-compute" | quote }}
+            - name: ENVECTOR_COMPUTE_LEASE_DURATION_SECONDS
+              value: {{ .Values.compute.election.leaseDurationSeconds | default 6 | quote }}
+            - name: ENVECTOR_COMPUTE_RENEW_DEADLINE_SECONDS
+              value: {{ .Values.compute.election.renewDeadlineSeconds | default 4 | quote }}
+            - name: ENVECTOR_COMPUTE_RETRY_PERIOD_SECONDS
+              value: {{ .Values.compute.election.retryPeriodSeconds | default 1 | quote }}
+            - name: ENVECTOR_HTTP_HEALTH_PORT
+              value: {{ .Values.compute.health.port | quote }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "envector-chart.computeName" . | quote }}
+            {{- end }}
+          {{- if and .Values.compute.license.enabled .Values.compute.license.injectAsEnv }}
+            - name: {{ .Values.compute.license.envVarName | default "ENVECTOR_LICENSE_TOKEN" }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $secretKey }}
+          {{- end }}
+          {{- if .Values.reportingSecret }}
+            - name: ENVECTOR_MARKETPLACE_ENTITLEMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: entitlement-id
+            - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: consumer-id
+            - name: ENVECTOR_MARKETPLACE_REPORTING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: reporting-key
+            - name: ENVECTOR_MARKETPLACE_PARTNER_ID
+              value: {{ .Values.marketplace.partnerId | quote }}
+          {{- end }}
+          {{ if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+          volumeMounts:
+            - name: compute-license
+              mountPath: /envector/license
+              readOnly: true
+          {{ end }}
+          {{- if eq .Values.compute.variant "gpu" }}
+            {{- with (get (default dict .Values.compute.resources) "gpu") }}
+          resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
+            {{- with (get (default dict .Values.compute.resources) "cpu") }}
+          resources:
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+        {{- if .Values.reportingSecret }}
+        - name: ubbagent
+          image: "{{ .Values.ubbagent.image.repository }}:{{ .Values.ubbagent.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AGENT_CONFIG_FILE
+              value: /etc/ubbagent/config.yaml
+            - name: AGENT_STATE_DIR
+              value: /var/ubbagent/state
+            - name: AGENT_REPORT_DIR
+              value: /var/ubbagent/reports
+            - name: AGENT_ENCODED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: reporting-key
+                  optional: true
+            - name: AGENT_CONSUMER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: consumer-id
+                  optional: true
+          volumeMounts:
+            - name: ubbagent-config
+              mountPath: /etc/ubbagent
+              readOnly: true
+            - name: ubbagent-state
+              mountPath: /var/ubbagent
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+        {{- end }}
+      {{- if or (and .Values.compute.license.enabled .Values.compute.license.mountAsFile) .Values.reportingSecret }}
+      volumes:
+        {{- if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+        - name: compute-license
+          secret:
+            secretName: {{ $secretName }}
+            items:
+              - key: {{ $secretKey | quote }}
+                path: token.jwt
+        {{- end }}
+        {{- if .Values.reportingSecret }}
+        - name: ubbagent-config
+          configMap:
+            name: {{ include "envector-chart.fullname" . }}-ubbagent-config
+        - name: ubbagent-state
+          emptyDir: {}
+        {{- end }}
+      {{- end }}

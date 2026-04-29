@@ -1,0 +1,47 @@
+suite: backend ha routing and readiness
+set:
+  compute.license.createSecret: false
+tests:
+  - it: uses pod-level readiness and pod uid env for k8s lease ha
+    template: templates/backend-deployment.yaml
+    set:
+      backend.election.backend: k8s-lease
+      backend.replicas: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POD_UID")].valueFrom.fieldRef.fieldPath
+          value: metadata.uid
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/pod-ready
+
+  - it: selects only the active leader pod for the backend service in ha mode
+    template: templates/service.yaml
+    documentIndex: 1
+    set:
+      backend.election.backend: k8s-lease
+      backend.replicas: 2
+    asserts:
+      - equal:
+          path: spec.selector["envector.ai/backend-leader"]
+          value: "true"
+
+  - it: keeps the backend service selector unchanged outside ha mode
+    template: templates/service.yaml
+    documentIndex: 1
+    set:
+      backend.election.backend: single-node
+      backend.replicas: 1
+    asserts:
+      - notExists:
+          path: spec.selector["envector.ai/backend-leader"]
+
+  - it: keeps leader-only readiness probe outside ha mode
+    template: templates/backend-deployment.yaml
+    set:
+      backend.election.backend: single-node
+      backend.replicas: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/ready

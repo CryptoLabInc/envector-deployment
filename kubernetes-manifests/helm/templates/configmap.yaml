@@ -1,60 +1,138 @@
+{{/*
+  Shared storage ConfigMap — single source of truth for bucket name, provider,
+  region, and S3-specific settings. Referenced by backend, orchestrator, and
+  shaper via envFrom so that `helm upgrade` with a new bucket_name propagates
+  everywhere in one shot.
+*/}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2e-config
+  name: {{ include "envector-chart.fullname" . }}-storage-config
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2e
+    app: {{ include "envector-chart.fullname" . }}
+    component: storage
 data:
-  ES2_LOG_LEVEL: {{ .Values.es2e.logLevel | default "INFO" | quote }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2b-config
-  labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2b
-data:
-  ES2_DB_SERVICE_SCHEMA: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
-  ES2_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
-  ES2_STORAGE_SERVICE_ADDRESS: {{ include "es2-chart.storageEndpoint" . | quote }}
-  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-  ES2_STORAGE_SERVICE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
-  ES2_LOG_LEVEL: {{ .Values.es2b.logLevel | default "INFO" | quote }}
-  ES2_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.es2b.env.shardSize | default 4096 | quote }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2o-config
-  labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2o
-data:
-  ES2_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
-  ES2_STORAGE_SERVICE_ADDRESS: {{ include "es2-chart.storageEndpoint" . | quote }}
-  ES2_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
-  ES2_STORAGE_SERVICE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
-  ES2_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "es2-keys" | quote }}
-  ES2_STORAGE_SERVICE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
-  ES2_LOG_LEVEL: {{ .Values.es2o.logLevel | default "INFO" | quote }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2c-config
-  labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2c
-data:
-  USE_TOPK: {{ .Values.es2c.env.useTopk | default false | quote }}
-  USE_GPU: {{ if eq .Values.es2c.variant "gpu" }}"true"{{ else }}"false"{{ end }}
-  ES2_THREAD_POOL_SCALE: {{ .Values.es2c.env.threadPoolScale | default 4 | quote }}
-  ES2C_NUM_SEARCH_HANDLER: {{ .Values.es2c.env.numSearchHandler | default 10 | quote }}
-  {{- if and .Values.es2c.license.enabled .Values.es2c.license.mountAsFile }}
-  ES2_LICENSE_TOKEN: {{ .Values.es2c.license.tokenPath | default "/es2/license/token.jwt" | quote }}
+  {{- if eq (toString .Values.embeddedMinio.enabled) "true" }}
+  ENVECTOR_STORAGE_PROVIDER: "s3"
+  ENVECTOR_STORAGE_BUCKET_NAME: "envector"
+  ENVECTOR_STORAGE_ADDRESS: "{{ include "envector-chart.fullname" . }}-embedded-minio:9000"
+  ENVECTOR_STORAGE_SECURE: "false"
+  ENVECTOR_STORAGE_REGION: "us-east-1"
+  ENVECTOR_STORAGE_CREATE_BUCKET: "true"
+  ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: "true"
+  {{- else }}
+  ENVECTOR_STORAGE_PROVIDER: {{ .Values.externalServices.storage.provider | default "s3" | quote }}
+  ENVECTOR_STORAGE_BUCKET_NAME: {{ .Values.externalServices.storage.bucket_name | default "envector" | quote }}
+  {{- if ne (.Values.externalServices.storage.provider | default "s3") "gcs" }}
+  ENVECTOR_STORAGE_ADDRESS: {{ include "envector-chart.storageEndpoint" . | quote }}
+  ENVECTOR_STORAGE_SECURE: {{ if hasKey .Values.externalServices.storage "secure" }}{{ .Values.externalServices.storage.secure | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_REGION: {{ .Values.externalServices.storage.region | default "us-east-1" | quote }}
+  ENVECTOR_STORAGE_CREATE_BUCKET: {{ if hasKey .Values.externalServices.storage "create" }}{{ .Values.externalServices.storage.create | quote }}{{ else }}"true"{{ end }}
+  ENVECTOR_STORAGE_HAS_HEALTHCHECK_ENDPOINT: {{ if hasKey .Values.externalServices.storage "hasHealthcheckEndpoint" }}{{ .Values.externalServices.storage.hasHealthcheckEndpoint | quote }}{{ else }}"false"{{ end }}
   {{- end }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
+data:
+  ENVECTOR_LOG_LEVEL: {{ .Values.endpoint.logLevel | default "INFO" | quote }}
+  {{- if hasKey .Values.endpoint "admin" }}
+  {{- if hasKey .Values.endpoint.admin "enabled" }}
+  ENVECTOR_ADMIN_API_ENABLED: {{ .Values.endpoint.admin.enabled | quote }}
+  {{- else }}
+  ENVECTOR_ADMIN_API_ENABLED: "true"
+  {{- end }}
+  {{- else }}
+  ENVECTOR_ADMIN_API_ENABLED: "true"
+  {{- end }}
+  ENVECTOR_AUTH_ROLE_CLAIM: {{ .Values.endpoint.auth.roleClaim | default "envector_roles" | quote }}
+  ENVECTOR_AUTH_PRINCIPAL_CLAIM: {{ .Values.endpoint.auth.principalClaim | default "principal_id" | quote }}
+  ENVECTOR_AUTH_CAPABILITY_POLICY_JSON: {{ .Values.endpoint.auth.capabilityPolicyJson | default "" | quote }}
+  {{- if .Values.endpoint.auth.enabled }}
+  ENVECTOR_AUTH_OIDC_ISSUER: {{ .Values.endpoint.auth.oidcIssuer | default "" | quote }}
+  ENVECTOR_AUTH_ALLOWED_AUDIENCES: {{ join "," (.Values.endpoint.auth.allowedAudiences | default (list)) | quote }}
+  ENVECTOR_AUTH_JWKS_URL: {{ .Values.endpoint.auth.jwksUrl | default "" | quote }}
+  {{- else }}
+  ENVECTOR_AUTH_OIDC_ISSUER: ""
+  ENVECTOR_AUTH_ALLOWED_AUDIENCES: ""
+  ENVECTOR_AUTH_JWKS_URL: ""
+  {{- end }}
+  {{- if .Values.keyManagement.provider }}
+  ENVECTOR_KEY_MGMT_PROVIDER: {{ .Values.keyManagement.provider | quote }}
+  ENVECTOR_KEY_MGMT_SECRET_REF: {{ .Values.keyManagement.secretRef | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
+data:
+  ENVECTOR_DB_SCHEMA: {{ .Values.externalServices.metadatadb.schema | default "public" | quote }}
+  ENVECTOR_LOG_LEVEL: {{ .Values.backend.logLevel | default "INFO" | quote }}
+  ENVECTOR_MAX_NUM_VECTORS_PER_SHARD: {{ .Values.backend.env.shardSize | default 4096 | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
+data:
+  ENVECTOR_LOG_LEVEL: {{ .Values.orchestrator.logLevel | default "INFO" | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+data:
+  USE_TOPK: {{ .Values.compute.env.useTopk | default false | quote }}
+  USE_GPU: {{ if eq .Values.compute.variant "gpu" }}"true"{{ else }}"false"{{ end }}
+  ENVECTOR_THREAD_POOL_SCALE: {{ .Values.compute.env.threadPoolScale | default 4 | quote }}
+  NUM_SEARCH_WORKERS: {{ .Values.compute.env.numSearchHandler | default 4 | quote }}
+  {{- if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
+  ENVECTOR_LICENSE_TOKEN: {{ .Values.compute.license.tokenPath | default "/envector/license/token.jwt" | quote }}
+  {{- end }}
+{{- if .Values.shaper.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+data:
+  ENVECTOR_LOG_LEVEL: {{ .Values.shaper.logLevel | default "INFO" | quote }}
+{{- end }}
+{{- if .Values.observability.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-otel-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: otel
+data:
+  OTEL_TRACES_ENABLED: {{ .Values.observability.tracing.enabled | default false | quote }}
+  {{- if .Values.observability.tracing.enabled }}
+  {{- $endpoint := required "observability.tracing.endpoint must be set when tracing is enabled" .Values.observability.tracing.endpoint }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ $endpoint | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.observability.tracing.protocol | default "grpc" | quote }}
+  {{- if .Values.observability.tracing.insecure }}
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  {{- end }}
+  {{- end }}
+{{- end }}

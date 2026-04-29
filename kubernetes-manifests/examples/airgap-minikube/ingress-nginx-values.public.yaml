@@ -1,0 +1,28 @@
+controller:
+  replicaCount: 1
+  hostPort:
+    enabled: true
+    ports:
+      http: 80
+      https: 443
+  service:
+    type: ClusterIP
+  ingressClass: nginx
+  ingressClassResource:
+    name: nginx
+    default: true
+  image:
+    registry: registry.k8s.io
+    image: ingress-nginx/controller
+    digest: ""
+  admissionWebhooks:
+    enabled: true
+    patch:
+      enabled: true
+      image:
+        registry: registry.k8s.io
+        image: ingress-nginx/kube-webhook-certgen
+        digest: ""
+
+defaultBackend:
+  enabled: false

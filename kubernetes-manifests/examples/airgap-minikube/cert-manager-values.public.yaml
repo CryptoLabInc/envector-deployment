@@ -1,0 +1,11 @@
+crds:
+  enabled: true
+
+imageRegistry: quay.io
+imageNamespace: jetstack
+
+global:
+  imagePullSecrets: []
+
+prometheus:
+  enabled: false

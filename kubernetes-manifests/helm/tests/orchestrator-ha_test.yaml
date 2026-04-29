@@ -1,0 +1,39 @@
+suite: orchestrator ha routing and readiness
+tests:
+  - it: uses pod-level readiness and pod uid env for orchestrator k8s lease ha
+    template: templates/orchestrator-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.token: "dummy-token"
+      orchestrator.election.backend: k8s-lease
+      orchestrator.replicas: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POD_UID")].valueFrom.fieldRef.fieldPath
+          value: metadata.uid
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/pod-ready
+
+  - it: selects only the active leader pod for the orchestrator service in ha mode
+    template: templates/service.yaml
+    documentIndex: 2
+    set:
+      compute.license.token: "dummy-token"
+      orchestrator.election.backend: k8s-lease
+      orchestrator.replicas: 2
+    asserts:
+      - equal:
+          path: spec.selector["envector.ai/orchestrator-leader"]
+          value: "true"
+
+  - it: keeps the orchestrator service selector unchanged outside ha mode
+    template: templates/service.yaml
+    documentIndex: 2
+    set:
+      compute.license.token: "dummy-token"
+      orchestrator.election.backend: postgres
+      orchestrator.replicas: 1
+    asserts:
+      - notExists:
+          path: spec.selector["envector.ai/orchestrator-leader"]

@@ -1,0 +1,23 @@
+global:
+  imageRegistry: registry.local:5000
+  imagePullSecrets: []
+  security:
+    allowInsecureImages: true
+
+fullnameOverride: metadatadb
+
+image:
+  tag: 17.6.0-debian-12-r4
+
+auth:
+  postgresPassword: change-me-postgres
+  username: envector
+  password: change-me-envector
+  database: envector
+
+architecture: standalone
+
+primary:
+  persistence:
+    enabled: true
+    size: 10Gi

@@ -1,0 +1,387 @@
+{{- if .Values.shaper.enabled }}
+{{- $shaperLeaderOnlyHA := and (eq (.Values.shaper.election.backend | default "") "k8s-lease") (gt (int (.Values.shaper.replicas | default 1)) 1) }}
+{{- $defaultLicenseSecret := printf "%s-%s-license" (include "envector-chart.fullname" .) (include "envector-chart.computeName" .) }}
+{{- $licenseSecretName := (coalesce .Values.compute.license.existingSecret (default $defaultLicenseSecret .Values.compute.license.secret.name)) }}
+{{- $licenseSecretKey := (.Values.compute.license.secret.key | default "token.jwt") }}
+{{- if $shaperLeaderOnlyHA }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}{{ default "-headless" .Values.shaper.service.headlessSuffix }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.shaper.service.port | default 50052 }}
+      targetPort: {{ .Values.shaper.service.port | default 50052 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.shaper.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}{{ default "-headless" .Values.shaper.service.headlessSuffix }}
+  replicas: {{ .Values.shaper.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.shaperName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.shaper.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.shaperName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.shaper.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      terminationGracePeriodSeconds: {{ .Values.shaper.terminationGracePeriodSeconds | default 120 }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.shaper.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.shaper.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.shaper.affinity $shaperLeaderOnlyHA }}
+      affinity:
+        {{- if .Values.shaper.affinity }}
+        {{- toYaml .Values.shaper.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "envector-chart.fullname" . }}
+                    component: {{ include "envector-chart.shaperName" . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.shaper.tolerations }}
+      tolerations:
+        {{- toYaml .Values.shaper.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.shaperName" . }}
+          image: "{{ .Values.shaper.image.repository }}:{{ .Values.shaper.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.shaper.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.shaper.service.port | default 50052 }}
+            - name: http-health
+              containerPort: {{ .Values.shaper.health.port }}
+          {{- if .Values.shaper.health.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - "wget -qO- --timeout=2 http://127.0.0.1:{{ .Values.shaper.health.port }}/health/drain >/dev/null 2>&1 || true; sleep 2"
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.shaper.health.liveness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.shaper.health.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shaper.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shaper.health.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shaper.health.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health/pod-ready
+              port: http-health
+            initialDelaySeconds: {{ .Values.shaper.health.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shaper.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shaper.health.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shaper.health.readiness.failureThreshold }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-storage-config
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}-config
+            {{- if .Values.observability.enabled }}
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+            {{- end }}
+            {{- if ne (.Values.externalServices.storage.provider | default "s3") "gcs" }}
+            - secretRef:
+                name: {{ include "envector-chart.storageSecretName" . }}
+            {{- end }}
+          env:
+            - name: ENVECTOR_SHAPER_PORT
+              value: {{ .Values.shaper.service.port | default 50056 | quote }}
+            - name: MALLOC_ARENA_MAX
+              value: {{ .Values.shaper.env.mallocArenaMax | default 1 | quote }}
+            - name: ENVECTOR_SHAPER_MAX_WORKERS
+              value: {{ .Values.shaper.env.maxWorkers | default 16 | quote }}
+            - name: ENVECTOR_SHAPER_SPLIT_UPLOAD_CONCURRENCY
+              value: {{ .Values.shaper.env.splitUploadConcurrency | default 1 | quote }}
+            - name: ENVECTOR_SHAPER_MERGE_DOWNLOAD_CONCURRENCY
+              value: {{ .Values.shaper.env.mergeDownloadConcurrency | default 1 | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: ENVECTOR_SHAPER_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ENVECTOR_SHAPER_HA_BACKEND
+              value: {{ .Values.shaper.election.backend | default "" | quote }}
+            - name: ENVECTOR_SHAPER_LEASE_NAME
+              value: {{ .Values.shaper.election.leaseName | default "envector-shaper" | quote }}
+            - name: ENVECTOR_SHAPER_LEASE_DURATION_SECONDS
+              value: {{ .Values.shaper.election.leaseDurationSeconds | default 15 | quote }}
+            - name: ENVECTOR_SHAPER_RENEW_DEADLINE_SECONDS
+              value: {{ .Values.shaper.election.renewDeadlineSeconds | default 10 | quote }}
+            - name: ENVECTOR_SHAPER_RETRY_PERIOD_SECONDS
+              value: {{ .Values.shaper.election.retryPeriodSeconds | default 2 | quote }}
+            - name: ENVECTOR_HTTP_HEALTH_PORT
+              value: {{ .Values.shaper.health.port | quote }}
+          {{- if .Values.shaper.license.enabled }}
+            - name: ENVECTOR_LICENSE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $licenseSecretName }}
+                  key: {{ $licenseSecretKey }}
+          {{- end }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "envector-chart.shaperName" . | quote }}
+            {{- end }}
+          {{- if .Values.reportingSecret }}
+            - name: ENVECTOR_MARKETPLACE_ENTITLEMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: entitlement-id
+            - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: consumer-id
+            - name: ENVECTOR_MARKETPLACE_REPORTING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: reporting-key
+            - name: ENVECTOR_MARKETPLACE_PARTNER_ID
+              value: {{ .Values.marketplace.partnerId | quote }}
+          {{- end }}
+          {{- if .Values.shaper.resources }}
+          resources:
+            {{- toYaml .Values.shaper.resources | nindent 12 }}
+          {{- end }}
+{{- else }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.shaper.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.shaper.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.shaperName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.shaper.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.shaperName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.shaper.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.shaper.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.shaper.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.shaper.affinity }}
+      affinity:
+        {{- toYaml .Values.shaper.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.shaper.tolerations }}
+      tolerations:
+        {{- toYaml .Values.shaper.tolerations | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.shaperName" . }}
+          image: "{{ .Values.shaper.image.repository }}:{{ .Values.shaper.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.shaper.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.shaper.service.port | default 50052 }}
+            - name: http-health
+              containerPort: {{ .Values.shaper.health.port }}
+          {{- if .Values.shaper.health.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.shaper.health.liveness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.shaper.health.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shaper.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shaper.health.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shaper.health.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.shaper.health.readiness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.shaper.health.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.shaper.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.shaper.health.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.shaper.health.readiness.failureThreshold }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-storage-config
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}-config
+            {{- if .Values.observability.enabled }}
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+            {{- end }}
+            {{- if ne (.Values.externalServices.storage.provider | default "s3") "gcs" }}
+            - secretRef:
+                name: {{ include "envector-chart.storageSecretName" . }}
+            {{- end }}
+          env:
+            - name: ENVECTOR_SHAPER_PORT
+              value: {{ .Values.shaper.service.port | default 50056 | quote }}
+            - name: MALLOC_ARENA_MAX
+              value: {{ .Values.shaper.env.mallocArenaMax | default 1 | quote }}
+            - name: ENVECTOR_SHAPER_MAX_WORKERS
+              value: {{ .Values.shaper.env.maxWorkers | default 16 | quote }}
+            - name: ENVECTOR_SHAPER_SPLIT_UPLOAD_CONCURRENCY
+              value: {{ .Values.shaper.env.splitUploadConcurrency | default 1 | quote }}
+            - name: ENVECTOR_SHAPER_MERGE_DOWNLOAD_CONCURRENCY
+              value: {{ .Values.shaper.env.mergeDownloadConcurrency | default 1 | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: ENVECTOR_SHAPER_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ENVECTOR_SHAPER_HA_BACKEND
+              value: {{ .Values.shaper.election.backend | default "" | quote }}
+            - name: ENVECTOR_SHAPER_LEASE_NAME
+              value: {{ .Values.shaper.election.leaseName | default "envector-shaper" | quote }}
+            - name: ENVECTOR_SHAPER_LEASE_DURATION_SECONDS
+              value: {{ .Values.shaper.election.leaseDurationSeconds | default 15 | quote }}
+            - name: ENVECTOR_SHAPER_RENEW_DEADLINE_SECONDS
+              value: {{ .Values.shaper.election.renewDeadlineSeconds | default 10 | quote }}
+            - name: ENVECTOR_SHAPER_RETRY_PERIOD_SECONDS
+              value: {{ .Values.shaper.election.retryPeriodSeconds | default 2 | quote }}
+            - name: ENVECTOR_HTTP_HEALTH_PORT
+              value: {{ .Values.shaper.health.port | quote }}
+          {{- if .Values.shaper.license.enabled }}
+            - name: ENVECTOR_LICENSE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $licenseSecretName }}
+                  key: {{ $licenseSecretKey }}
+          {{- end }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "envector-chart.shaperName" . | quote }}
+            {{- end }}
+          {{- if .Values.reportingSecret }}
+            - name: ENVECTOR_MARKETPLACE_ENTITLEMENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: entitlement-id
+            - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: consumer-id
+            - name: ENVECTOR_MARKETPLACE_REPORTING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: reporting-key
+            - name: ENVECTOR_MARKETPLACE_PARTNER_ID
+              value: {{ .Values.marketplace.partnerId | quote }}
+          {{- end }}
+          {{- if .Values.shaper.resources }}
+          resources:
+            {{- toYaml .Values.shaper.resources | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

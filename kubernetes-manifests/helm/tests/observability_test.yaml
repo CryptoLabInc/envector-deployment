@@ -1,0 +1,81 @@
+suite: observability and storage config
+tests:
+  # --- otel-config ConfigMap ---
+  - it: creates otel-config ConfigMap when observability is enabled
+    template: templates/configmap.yaml
+    documentIndex: 6
+    set:
+      compute.license.token: dummy
+      observability.enabled: true
+      observability.tracing.enabled: true
+      observability.tracing.endpoint: "http://otel-collector:4317"
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data.OTEL_TRACES_ENABLED
+          value: "true"
+      - equal:
+          path: data.OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4317"
+      - equal:
+          path: data.OTEL_EXPORTER_OTLP_PROTOCOL
+          value: "grpc"
+
+  - it: does not render otel-config when observability is disabled
+    template: templates/configmap.yaml
+    set:
+      compute.license.token: dummy
+      observability.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 6
+
+  # --- OTEL_SERVICE_NAME per deployment ---
+  - it: injects OTEL_SERVICE_NAME into backend when observability is enabled
+    template: templates/backend-deployment.yaml
+    set:
+      compute.license.token: dummy
+      observability.enabled: true
+      observability.tracing.enabled: true
+      observability.tracing.endpoint: "http://otel-collector:4317"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+          any: true
+
+  - it: does not inject OTEL_SERVICE_NAME when observability is disabled
+    template: templates/backend-deployment.yaml
+    set:
+      compute.license.token: dummy
+      observability.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+          any: true
+
+  # --- storage-config ConfigMap ---
+  - it: creates storage-config ConfigMap with S3 settings
+    template: templates/configmap.yaml
+    documentIndex: 0
+    set:
+      compute.license.token: dummy
+      externalServices.storage.provider: s3
+      externalServices.storage.bucket_name: my-bucket
+      externalServices.storage.region: us-west-2
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data.ENVECTOR_STORAGE_PROVIDER
+          value: "s3"
+      - equal:
+          path: data.ENVECTOR_STORAGE_BUCKET_NAME
+          value: my-bucket
+      - equal:
+          path: data.ENVECTOR_STORAGE_REGION
+          value: us-west-2

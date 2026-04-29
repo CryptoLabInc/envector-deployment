@@ -1,0 +1,30 @@
+{{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
+{{- if eq $electionBackend "k8s-lease" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-lease
+  labels:
+    {{- include "envector-chart.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-lease
+  labels:
+    {{- include "envector-chart.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "envector-chart.serviceAccountName" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-lease
+{{- end }}

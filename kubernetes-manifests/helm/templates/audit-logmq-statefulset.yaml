@@ -1,0 +1,101 @@
+{{- if .Values.audit.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditLogmqName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: 1
+  serviceName: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.auditLogmqName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.auditLogmqName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: redpanda
+          image: "{{ .Values.audit.logmq.image.repository }}:{{ .Values.audit.logmq.image.tag }}"
+          imagePullPolicy: {{ .Values.audit.logmq.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - /scripts/redpanda-init.sh
+          args:
+            - rpk
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp=1
+            - --memory={{ .Values.audit.logmq.memory | default "1G" }}
+            - --reserve-memory=0M
+            - --node-id=0
+            - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+            - --advertise-kafka-addr=PLAINTEXT://{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}-0.{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}:9092
+          ports:
+            - name: kafka
+              containerPort: 9092
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+            - name: init-script
+              mountPath: /scripts
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - rpk cluster info --brokers localhost:9092 >/dev/null 2>&1
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - rpk cluster info --brokers localhost:9092 >/dev/null 2>&1
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- if .Values.audit.logmq.resources }}
+          resources:
+            {{- toYaml .Values.audit.logmq.resources | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: init-script
+          configMap:
+            name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}-init
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.audit.logmq.storage.storageClassName }}
+        storageClassName: {{ .Values.audit.logmq.storage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.audit.logmq.storage.size | default "10Gi" }}
+{{- end }}

@@ -1,0 +1,55 @@
+{{- if eq (toString .Values.cloudSQL.enabled) "true" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-cloud-sql-proxy
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: cloud-sql-proxy
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: cloud-sql-proxy
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: cloud-sql-proxy
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      containers:
+        - name: cloud-sql-proxy
+          image: "{{ .Values.cloudSQL.proxy.image.repository }}:{{ .Values.cloudSQL.proxy.image.tag }}"
+          args:
+            - "{{ .Values.cloudSQL.instanceConnectionName }}"
+            - "--address=0.0.0.0"
+            - "--port={{ .Values.cloudSQL.proxy.port }}"
+            - "--auto-iam-authn"
+          ports:
+            - containerPort: {{ .Values.cloudSQL.proxy.port }}
+          resources:
+            {{- toYaml .Values.cloudSQL.proxy.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-cloud-sql-proxy
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: cloud-sql-proxy
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: cloud-sql-proxy
+  ports:
+    - port: 5432
+      targetPort: {{ .Values.cloudSQL.proxy.port }}
+{{- end }}
