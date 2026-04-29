@@ -87,7 +87,7 @@ endpoint:
   admin:
     enabled: true
   logLevel: INFO
-  replicas: 2
+  replicas: 1
   ha:
     mode: active-active
   resources: {}
@@ -129,7 +129,7 @@ backend:
       timeoutSeconds: 3
       failureThreshold: 3
   logLevel: INFO
-  replicas: 2
+  replicas: 1
   election:
     backend: k8s-lease
     leaseName: envector-backend
@@ -228,7 +228,7 @@ compute:
       timeoutSeconds: 3
       failureThreshold: 3
   command: []
-  replicas: 2
+  replicas: 1
   terminationGracePeriodSeconds: 120
   election:
     backend: k8s-lease
