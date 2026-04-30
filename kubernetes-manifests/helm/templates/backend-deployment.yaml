@@ -1,0 +1,194 @@
+{{- $backendLeaderOnlyHA := and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.backend.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.backend.replicas | default 1 }}
+  # With replicas=2 and PDB minAvailable=1, the default RollingUpdate of
+  # maxUnavailable=25% rounds up to 1 pod, which conflicts with the PDB and
+  # can deadlock rolling updates / node drains. Use maxSurge=1/maxUnavailable=0
+  # so a new pod must become Ready (i.e. win/hold leader election) before the
+  # old one is taken down.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.backendName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.backend.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and (not .Values.externalSecrets.dbSecret.enabled) (eq (.Values.existingSecrets.dbSecret | default "") "") }}
+        checksum/secret-db: {{ include (print $.Template.BasePath "/secret-db.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if and (ne (.Values.externalServices.storage.provider | default "s3") "gcs") (not .Values.externalSecrets.storageSecret.enabled) (eq (.Values.existingSecrets.storageSecret | default "") "") }}
+        checksum/secret-storage: {{ include (print $.Template.BasePath "/secret-storage.yaml") . | sha256sum }}
+        {{- end }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.backendName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.backend.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.reportingSecret }}
+        goog-partner-solution: isol_plb32_001kf00001cpdexiax_z2tshwkesg6ard35ayqkkenlgep7kpvo
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.backend.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.backend.affinity (gt (int (.Values.backend.replicas | default 1)) 1) }}
+      affinity:
+        {{- if .Values.backend.affinity }}
+        {{- toYaml .Values.backend.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "envector-chart.fullname" . }}
+                    component: {{ include "envector-chart.backendName" . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml .Values.backend.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if eq (toString .Values.embeddedPostgres.enabled) "true" }}
+      initContainers:
+        - name: wait-postgres
+          image: "{{ .Values.busybox.image.repository }}:{{ .Values.busybox.image.tag }}"
+          command: ["sh", "-c", "until nc -z {{ include "envector-chart.fullname" . }}-embedded-pg 5432; do echo waiting for postgres; sleep 2; done"]
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.backendName" . }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port | default 50051 }}
+            - name: http-health
+              containerPort: {{ .Values.backend.health.port }}
+          {{- if .Values.backend.health.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.backend.health.liveness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.backend.health.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.health.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.health.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              {{- if $backendLeaderOnlyHA }}
+              path: /health/pod-ready
+              {{- else }}
+              path: {{ .Values.backend.health.readiness.path }}
+              {{- end }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.backend.health.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.health.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.health.readiness.failureThreshold }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-storage-config
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}-config
+            {{- if .Values.observability.enabled }}
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+            {{- end }}
+            - secretRef:
+                name: {{ include "envector-chart.dbSecretName" . }}
+            {{- if ne (.Values.externalServices.storage.provider | default "s3") "gcs" }}
+            - secretRef:
+                name: {{ include "envector-chart.storageSecretName" . }}
+            {{- end }}
+          env:
+            - name: ENVECTOR_BACKEND_PORT
+              value: {{ .Values.backend.service.port | default 50051 | quote }}
+            - name: ENVECTOR_BACKEND_ELECTION_BACKEND
+              value: {{ .Values.backend.election.backend | default "k8s-lease" | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: ENVECTOR_BACKEND_KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ENVECTOR_BACKEND_LEASE_NAME
+              value: {{ .Values.backend.election.leaseName | default "envector-backend" | quote }}
+            - name: ENVECTOR_BACKEND_LEASE_DURATION_SECONDS
+              value: {{ .Values.backend.election.leaseDurationSeconds | default 15 | quote }}
+            - name: ENVECTOR_BACKEND_RENEW_DEADLINE_SECONDS
+              value: {{ .Values.backend.election.renewDeadlineSeconds | default 10 | quote }}
+            - name: ENVECTOR_BACKEND_RETRY_PERIOD_SECONDS
+              value: {{ .Values.backend.election.retryPeriodSeconds | default 2 | quote }}
+            - name: ENVECTOR_ORCHESTRATOR_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}:{{ .Values.orchestrator.service.port | default 25121 }}"
+            {{- if .Values.shaper.enabled }}
+            - name: ENVECTOR_SHAPER_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}:{{ .Values.shaper.service.port | default 50052 }}"
+            {{- end }}
+            - name: ENVECTOR_HTTP_HEALTH_PORT
+              value: {{ .Values.backend.health.port | quote }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "envector-chart.backendName" . | quote }}
+            {{- end }}
+          {{- if .Values.reportingSecret }}
+            - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reportingSecret }}
+                  key: consumer-id
+          {{- end }}
+          {{- if .Values.backend.resources }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- end }}

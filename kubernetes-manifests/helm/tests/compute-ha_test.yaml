@@ -1,0 +1,44 @@
+suite: compute ha routing and readiness
+set:
+  compute.license.createSecret: false
+tests:
+  - it: uses pod-level readiness and election envs for compute k8s lease ha
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.election.backend: k8s-lease
+      compute.replicas: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POD_UID")].valueFrom.fieldRef.fieldPath
+          value: metadata.uid
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_COMPUTE_HA_BACKEND")].value
+          value: k8s-lease
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/pod-ready
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 120
+
+  - it: selects only the active leader pod for the compute service in ha mode
+    template: templates/service.yaml
+    documentIndex: 3
+    set:
+      compute.election.backend: k8s-lease
+      compute.replicas: 2
+    asserts:
+      - equal:
+          path: spec.selector["envector.ai/compute-leader"]
+          value: "true"
+
+  - it: keeps the compute service selector unchanged outside ha mode
+    template: templates/service.yaml
+    documentIndex: 3
+    set:
+      compute.election.backend: ""
+      compute.replicas: 1
+    asserts:
+      - notExists:
+          path: spec.selector["envector.ai/compute-leader"]

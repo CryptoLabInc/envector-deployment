@@ -1,0 +1,44 @@
+{{- if .Values.reportingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-ubbagent-config
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: ubbagent
+data:
+  config.yaml: |
+    identities:
+    - name: gcp
+      gcp:
+        encodedServiceAccountKey: $AGENT_ENCODED_KEY
+
+    metrics:
+    - name: {{ .Values.ubbagent.metric.name }}
+      type: int
+      passthrough: {}
+      endpoints:
+      - name: report_endpoint
+
+    endpoints:
+    {{- if eq .Values.ubbagent.endpoint "disk" }}
+    - name: report_endpoint
+      disk:
+        reportDir: /var/ubbagent/reports
+        expireSeconds: 3600
+    {{- else }}
+    - name: report_endpoint
+      servicecontrol:
+        identity: gcp
+        serviceName: {{ .Values.marketplace.serviceName }}
+        consumerId: $AGENT_CONSUMER_ID
+    {{- end }}
+
+    sources:
+    - name: compute_heartbeat
+      heartbeat:
+        metric: {{ .Values.ubbagent.metric.name }}
+        intervalSeconds: {{ .Values.ubbagent.metric.intervalSeconds }}
+        value:
+          int64Value: 1
+{{- end }}

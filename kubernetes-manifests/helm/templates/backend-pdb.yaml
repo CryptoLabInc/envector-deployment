@@ -1,0 +1,14 @@
+{{- if and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}
+  labels:
+    {{- include "envector-chart.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.backendName" . }}
+{{- end }}

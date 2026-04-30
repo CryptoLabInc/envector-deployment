@@ -1,0 +1,96 @@
+{{- if eq (toString .Values.embeddedPostgres.enabled) "true" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-pg
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-postgres
+type: Opaque
+stringData:
+  POSTGRES_USER: {{ .Values.embeddedPostgres.user | quote }}
+  POSTGRES_PASSWORD: {{ .Values.embeddedPostgres.password | quote }}
+  POSTGRES_DB: {{ .Values.embeddedPostgres.database | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-pg
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-postgres
+spec:
+  clusterIP: None
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-embedded-pg
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: embedded-postgres
+spec:
+  serviceName: {{ include "envector-chart.fullname" . }}-embedded-pg
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: embedded-postgres
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: embedded-postgres
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: "{{ .Values.embeddedPostgres.image.repository }}:{{ .Values.embeddedPostgres.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: {{ include "envector-chart.fullname" . }}-embedded-pg
+          volumeMounts:
+            - name: pgdata
+              # Mount the whole /var/lib/postgresql directory (no subPath) so
+              # the volume is compatible with both postgres 16
+              # (PGDATA=/var/lib/postgresql/data) and postgres 18
+              # (PGDATA=/var/lib/postgresql/18/docker).
+              mountPath: /var/lib/postgresql
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.embeddedPostgres.user | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.embeddedPostgres.storage.size | default "1Gi" }}
+        {{- if .Values.embeddedPostgres.storage.storageClassName }}
+        storageClassName: {{ .Values.embeddedPostgres.storage.storageClassName | quote }}
+        {{- end }}
+{{- end }}

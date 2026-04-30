@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.endpoint.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.endpoint.replicas | default 2 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.endpointName" . }}
+      {{- with .Values.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.endpoint.labels }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.audit.enabled }}
+        checksum/audit-configmap: {{ include (print $.Template.BasePath "/audit-configmap.yaml") . | sha256sum }}
+        {{- end }}
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.endpointName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.endpoint.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.reportingSecret }}
+        goog-partner-solution: isol_plb32_001kf00001cpdexiax_z2tshwkesg6ard35ayqkkenlgep7kpvo
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.endpoint.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.endpoint.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.endpoint.affinity }}
+      affinity:
+        {{- toYaml .Values.endpoint.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.endpoint.tolerations }}
+      tolerations:
+        {{- toYaml .Values.endpoint.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.endpoint.affinity (gt (int (.Values.endpoint.replicas | default 2)) 1) }}
+      affinity:
+        {{- if .Values.endpoint.affinity }}
+        {{- toYaml .Values.endpoint.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "envector-chart.fullname" . }}
+                    component: {{ include "envector-chart.endpointName" . }}
+        {{- end }}
+      {{- end }}
+      initContainers:
+        {{- if .Values.backend.health.enabled }}
+        - name: wait-for-backend
+          image: "{{ .Values.busybox.image.repository }}:{{ .Values.busybox.image.tag }}"
+          command:
+            - sh
+            - -c
+            - >-
+              until wget -qO /dev/null --timeout=2 http://{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}:{{ .Values.backend.health.port | default 8080 }}{{ .Values.backend.health.readiness.path | default "/health/ready" }} 2>/dev/null; do echo waiting for backend readiness; sleep 2; done
+        {{- end }}
+        - name: wait-for-orchestrator
+          image: "{{ .Values.busybox.image.repository }}:{{ .Values.busybox.image.tag }}"
+          command:
+            - sh
+            - -c
+            - >-
+              until nc -z -w 2 {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }} {{ .Values.orchestrator.service.port }}; do echo waiting for orchestrator; sleep 2; done
+      containers:
+        - name: {{ include "envector-chart.endpointName" . }}
+          image: "{{ .Values.endpoint.image.repository }}:{{ .Values.endpoint.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.endpoint.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .Values.endpoint.service.port | default 50050 }}
+            - name: http-health
+              containerPort: {{ .Values.endpoint.health.port | default 8080 }}
+          {{- if .Values.endpoint.health.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.endpoint.health.liveness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.endpoint.health.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.endpoint.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.endpoint.health.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.endpoint.health.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.endpoint.health.readiness.path }}
+              port: http-health
+            initialDelaySeconds: {{ .Values.endpoint.health.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.endpoint.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.endpoint.health.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.endpoint.health.readiness.failureThreshold }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}-config
+            {{- if .Values.observability.enabled }}
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+            {{- end }}
+          env:
+            - name: ENVECTOR_ENDPOINT_PORT
+              value: {{ .Values.endpoint.service.port | default 50050 | quote }}
+            - name: ENVECTOR_BACKEND_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}:{{ .Values.backend.service.port | default 50051 }}"
+            - name: ENVECTOR_ORCHESTRATOR_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}:{{ .Values.orchestrator.service.port | default 25121 }}"
+            - name: ENVECTOR_COMPUTE_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}:{{ .Values.compute.service.port | default 25123 }}"
+            - name: ENVECTOR_SHAPER_ADDRESS
+              value: "dns:///{{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}:{{ .Values.shaper.service.port | default 50056 }}"
+            - name: ENVECTOR_ENDPOINT_HA_MODE
+              value: {{ .Values.endpoint.ha.mode | default "active-active" | quote }}
+            - name: ENVECTOR_ENDPOINT_HOST_PORT
+              value: {{ .Values.endpoint.service.nodePort | default (.Values.endpoint.service.port | default 50050) | quote }}
+            - name: ENVECTOR_HTTP_HEALTH_PORT
+              value: {{ .Values.endpoint.health.port | default 8080 | quote }}
+            {{- if .Values.audit.enabled }}
+            - name: AUDIT_LOG_SINK
+              value: "file"
+            - name: AUDIT_LOG_DIR
+              value: "/var/log/envector/audit"
+            {{- end }}
+          {{- if .Values.audit.enabled }}
+          volumeMounts:
+            - name: audit-logs
+              mountPath: /var/log/envector/audit
+          {{- end }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "envector-chart.endpointName" . | quote }}
+            {{- end }}
+          {{- if .Values.endpoint.resources }}
+          resources:
+            {{- toYaml .Values.endpoint.resources | nindent 12 }}
+          {{- end }}
+        {{- if .Values.audit.enabled }}
+        - name: audit-logagent
+          image: "{{ .Values.audit.logagent.image.repository }}:{{ .Values.audit.logagent.image.tag }}"
+          imagePullPolicy: {{ .Values.audit.logagent.image.pullPolicy | default "IfNotPresent" }}
+          args: ["--config", "/etc/vector/vector.yaml"]
+          volumeMounts:
+            - name: audit-logs
+              mountPath: /var/log/envector/audit
+              readOnly: true
+            - name: vector-config
+              mountPath: /etc/vector
+              readOnly: true
+            - name: vector-data
+              mountPath: /vector-data-dir
+          {{- if .Values.audit.logagent.resources }}
+          resources:
+            {{- toYaml .Values.audit.logagent.resources | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- if .Values.audit.enabled }}
+      volumes:
+        - name: audit-logs
+          emptyDir: {}
+        - name: vector-config
+          configMap:
+            name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditName" . }}-vector-config
+        - name: vector-data
+          emptyDir: {}
+      {{- end }}

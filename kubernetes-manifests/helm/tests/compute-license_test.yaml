@@ -1,0 +1,145 @@
+suite: compute license combinations
+tests:
+  - it: renders headless compute Service with publishNotReadyAddresses enabled
+    template: templates/compute-deployment.yaml
+    documentIndex: 0
+    set:
+      compute.license.token: "dummy-token"
+    asserts:
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.clusterIP
+          value: None
+      - equal:
+          path: spec.publishNotReadyAddresses
+          value: true
+
+  - it: defaults mount the token file without env injection
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.token: "dummy-token"
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")]
+      - exists:
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
+
+  - it: injects env and mounts file when both are enabled
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: true
+      compute.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-envector-chart-compute-license
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.key
+          value: token.jwt
+      - exists:
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
+
+  - it: injects env only when mountAsFile is false
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
+      compute.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: RELEASE-NAME-envector-chart-compute-license
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name=="compute-license")]
+
+  - it: configmap omits ENVECTOR_LICENSE_TOKEN when mountAsFile is false
+    set:
+      compute.license.mountAsFile: false
+      compute.license.createSecret: false
+    template: templates/configmap.yaml
+    documentIndex: 4 # compute configmap (after storage, endpoint, backend, orch)
+    asserts:
+      - notExists:
+          path: data.ENVECTOR_LICENSE_TOKEN
+
+  - it: renders secret with provided token when createSecret is used
+    set:
+      compute.license.token: "dummy-token"
+    template: templates/compute-license-secret.yaml
+    asserts:
+      - equal:
+          path: stringData["token.jwt"]
+          value: "dummy-token"
+      - equal:
+          path: type
+          value: Opaque
+
+  - it: uses existingSecret name in deployment mounts and env
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.existingSecret: my-license
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: true
+      compute.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_LICENSE_TOKEN")].valueFrom.secretKeyRef.name
+          value: my-license
+      - equal:
+          path: spec.template.spec.volumes[?(@.name=="compute-license")].secret.secretName
+          value: my-license
+
+  - it: renders ExternalSecret with AWS SM fields when enabled
+    set:
+      externalSecrets.enabled: true
+      externalSecrets.secretStoreRef.name: aws-store
+      externalSecrets.secretStoreRef.kind: ClusterSecretStore
+      externalSecrets.license.remoteRef.key: arn:aws:secretsmanager:us-east-1:123456789012:secret:license
+      externalSecrets.license.remoteRef.property: token
+      externalSecrets.license.remoteRef.version: AWSCURRENT
+      externalSecrets.license.remoteRef.decodingStrategy: Base64
+      externalSecrets.license.remoteRef.metadataPolicy: Fetch
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
+    template: templates/externalsecret-license.yaml
+    asserts:
+      - equal:
+          path: spec.data[0].remoteRef.key
+          value: arn:aws:secretsmanager:us-east-1:123456789012:secret:license
+      - equal:
+          path: spec.data[0].remoteRef.property
+          value: token
+      - equal:
+          path: spec.data[0].remoteRef.version
+          value: AWSCURRENT
+      - equal:
+          path: spec.data[0].remoteRef.decodingStrategy
+          value: Base64
+      - equal:
+          path: spec.data[0].remoteRef.metadataPolicy
+          value: Fetch
+
+  - it: allows overriding secretStoreRef per license ExternalSecret
+    set:
+      externalSecrets.enabled: true
+      externalSecrets.secretStoreRef.name: global-store
+      externalSecrets.secretStoreRef.kind: ClusterSecretStore
+      externalSecrets.license.secretStoreRef.name: sm-store
+      externalSecrets.license.secretStoreRef.kind: SecretStore
+      externalSecrets.license.remoteRef.key: prod/license
+      compute.license.injectAsEnv: true
+      compute.license.mountAsFile: false
+    template: templates/externalsecret-license.yaml
+    asserts:
+      - equal:
+          path: spec.secretStoreRef.name
+          value: sm-store
+      - equal:
+          path: spec.secretStoreRef.kind
+          value: SecretStore

@@ -1,91 +1,174 @@
-# es2-chart/templates/service.yaml
+# envector-chart/templates/service.yaml
+{{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
+{{- $orchestratorLeaderOnlyHA := and (eq $electionBackend "k8s-lease") (gt (int (.Values.orchestrator.replicas | default 1)) 1) }}
+{{- $backendLeaderOnlyHA := and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
+{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
+{{- $shaperLeaderOnlyHA := and (eq (.Values.shaper.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.shaper.replicas | default 1)) 1) }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2e
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.endpointName" . }}
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2e
-{{- with .Values.es2e.service.annotations }}
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
+{{- with .Values.endpoint.service.annotations }}
   annotations:
   {{- toYaml . | nindent 4 }}
 {{- end }}
 spec:
-  type: {{ .Values.es2e.service.type | default "ClusterIP" }}
+  type: {{ .Values.endpoint.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.es2e.service.port | default 50050 }}
-      targetPort: {{ .Values.es2e.service.port | default 50050 }}
+    - port: {{ .Values.endpoint.service.port | default 50050 }}
+      name: grpc
+      targetPort: {{ .Values.endpoint.service.port | default 50050 }}
       protocol: TCP
-      {{- if and (eq (.Values.es2e.service.type | default "ClusterIP") "NodePort") .Values.es2e.service.nodePort }}
-      nodePort: {{ .Values.es2e.service.nodePort }}
+      {{- if and (eq (.Values.endpoint.service.type | default "ClusterIP") "NodePort") .Values.endpoint.service.nodePort }}
+      nodePort: {{ .Values.endpoint.service.nodePort }}
       {{- end }}
+    - port: {{ .Values.endpoint.health.port | default 8080 }}
+      name: http-health
+      targetPort: {{ .Values.endpoint.health.port | default 8080 }}
+      protocol: TCP
   selector:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2e
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.endpointName" . }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2b
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.backendName" . }}
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2b
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
 spec:
-  type: {{ .Values.es2b.service.type | default "ClusterIP" }}
+  type: {{ .Values.backend.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.es2b.service.port | default 50051 }}
-      targetPort: {{ .Values.es2b.service.port | default 50051 }}
+    - port: {{ .Values.backend.service.port | default 50051 }}
+      name: grpc
+      targetPort: {{ .Values.backend.service.port | default 50051 }}
       protocol: TCP
-      {{- if eq (.Values.es2b.service.type | default "ClusterIP") "NodePort" }}
-      {{- if .Values.es2b.service.nodePort }}
-      nodePort: {{ .Values.es2b.service.nodePort }}
+      {{- if and (eq (.Values.backend.service.type | default "ClusterIP") "NodePort") .Values.backend.service.nodePort }}
+      nodePort: {{ .Values.backend.service.nodePort }}
       {{- end }}
-      {{- end }}
+    - port: {{ .Values.backend.health.port | default 8080 }}
+      name: http-health
+      targetPort: {{ .Values.backend.health.port | default 8080 }}
+      protocol: TCP
   selector:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2b
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.backendName" . }}
+    {{- if $backendLeaderOnlyHA }}
+    envector.ai/backend-leader: "true"
+    {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2o
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2o
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
 spec:
-  type: {{ .Values.es2o.service.type | default "ClusterIP" }}
+  type: {{ .Values.orchestrator.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.es2o.service.port | default 25121 }}
-      targetPort: {{ .Values.es2o.service.port | default 25121 }}
+    - port: {{ .Values.orchestrator.service.port | default 25121 }}
+      name: grpc
+      targetPort: {{ .Values.orchestrator.service.port | default 25121 }}
       protocol: TCP
-      {{- if eq (.Values.es2o.service.type | default "ClusterIP") "NodePort" }}
-      {{- if .Values.es2o.service.nodePort }}
-      nodePort: {{ .Values.es2o.service.nodePort }}
+      {{- if and (eq (.Values.orchestrator.service.type | default "ClusterIP") "NodePort") .Values.orchestrator.service.nodePort }}
+      nodePort: {{ .Values.orchestrator.service.nodePort }}
       {{- end }}
-      {{- end }}
+    - port: {{ .Values.orchestrator.health.port | default 8080 }}
+      name: http-health
+      targetPort: {{ .Values.orchestrator.health.port | default 8080 }}
+      protocol: TCP
   selector:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2o
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.orchestratorName" . }}
+    {{- if $orchestratorLeaderOnlyHA }}
+    envector.ai/orchestrator-leader: "true"
+    {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "es2-chart.fullname" . }}-es2c
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}
   labels:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2c
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
 spec:
-  type: {{ .Values.es2c.service.type | default "ClusterIP" }}
+  type: {{ .Values.compute.service.type | default "ClusterIP" }}
   ports:
-    - port: {{ .Values.es2c.service.port | default 25123 }}
-      targetPort: {{ .Values.es2c.service.port | default 25123 }}
+    - port: {{ .Values.compute.service.port | default 25123 }}
+      targetPort: {{ .Values.compute.service.port | default 25123 }}
       protocol: TCP
-      {{- if eq (.Values.es2c.service.type | default "ClusterIP") "NodePort" }}
-      {{- if .Values.es2c.service.nodePort }}
-      nodePort: {{ .Values.es2c.service.nodePort }}
-      {{- end }}
+      {{- if and (eq (.Values.compute.service.type | default "ClusterIP") "NodePort") .Values.compute.service.nodePort }}
+      nodePort: {{ .Values.compute.service.nodePort }}
       {{- end }}
   selector:
-    app: {{ include "es2-chart.fullname" . }}
-    component: es2c
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
+    {{- if $computeLeaderOnlyHA }}
+    envector.ai/compute-leader: "true"
+    {{- end }}
+{{- if .Values.shaper.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.shaperName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+spec:
+  type: {{ .Values.shaper.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.shaper.service.port | default 50052 }}
+      targetPort: {{ .Values.shaper.service.port | default 50052 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.shaperName" . }}
+    {{- if $shaperLeaderOnlyHA }}
+    envector.ai/shaper-leader: "true"
+    {{- end }}
+{{- end }}
+{{- if .Values.audit.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditName" . }}
+spec:
+  type: {{ .Values.audit.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.audit.service.port | default 50052 }}
+      name: grpc
+      targetPort: {{ .Values.audit.service.port | default 50052 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.auditLogmqName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditLogmqName" . }}
+spec:
+  clusterIP: None
+  ports:
+    - port: 9092
+      name: kafka
+      targetPort: 9092
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.auditLogmqName" . }}
+{{- end }}

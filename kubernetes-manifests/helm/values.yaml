@@ -1,4 +1,4 @@
-# es2-chart/values.yaml
+# envector-chart/values.yaml
 
 # Global settings can be defined here
 # username is used to mimic the ${USER_NAME} variable from docker-compose
@@ -21,6 +21,9 @@ externalServices:
     url: "user=<metadatadb_user> password=<metadatadb_password> host=<metadatadb_host> port=<metadatadb_port> dbname=<metadatadb_database> sslmode=require options='-c search_path=public'"
     schema: "public"
   storage:
+    # provider: s3 (default, S3-compatible) or gcs (GCP native via workload identity)
+    # When provider=gcs: host, port, user, password, secure, region are not needed.
+    # GCS auth uses the pod's service account (workload identity), no access keys.
     provider: s3
     host: <storage_host>
     port: <storage_port>
@@ -32,27 +35,61 @@ externalServices:
     bucket_name: <storage_bucket>
     hasHealthcheckEndpoint: false # Only for Minio.
 
+busybox:
+  image:
+    repository: busybox
+    tag: "1.36"
+
 imagePullSecrets: []
 
 # Global labels applied to all components
 labels: {}
 
-# Configuration for es2e service
-es2e:
-  name: es2e
+# Configuration for envector endpoint service
+endpoint:
+  # Use "endpoint" if your release/chart name already includes "envector"
+  name: ""
   labels: {}
   image:
-    repository: cryptolabinc/es2e
-    tag: latest
+    repository: cryptolabinc/envector-endpoint
+    tag: main
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 50050
     # type: LoadBalancer # Enable this for direct external access without ingress
     # nodePort: 30050 # Optionally specify a nodePort when using NodePort type
-    # Optional pod annotations for es2e deployment
+    # Optional pod annotations for endpoint deployment
     annotations: {}
+  health:
+    enabled: true
+    port: 8080
+    liveness:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1 # Fail if it hangs for >1s
+      failureThreshold: 3 # Restart after 3 fails
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1 # Fail if it hangs for >1s
+      failureThreshold: 3 # Restart after 3 fails
+  auth:
+    enabled: false
+    oidcIssuer: "" # Example: https://keycloak.example.com/realms/envector
+    allowedAudiences: [] # Example: ["envector-cli"]
+    roleClaim: "envector_roles"
+    principalClaim: "principal_id"
+    jwksUrl: ""
+    capabilityPolicyJson: ""
+  admin:
+    enabled: true
   logLevel: INFO
+  replicas: 1
+  ha:
+    mode: active-active
   resources: {}
     # limits:
     #   cpu: "1"
@@ -64,18 +101,41 @@ es2e:
   affinity: {}
   tolerations: []
 
-# Configuration for es2b service
-es2b:
-  name: es2b
+# Configuration for envector backend service
+backend:
+  # Use "backend" if your release/chart name already includes "envector"
+  name: ""
   labels: {}
   image:
-    repository: cryptolabinc/es2b
-    tag: latest
+    repository: cryptolabinc/envector-backend
+    tag: main
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 50051
+  health:
+    enabled: true
+    port: 8080
+    liveness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
   logLevel: INFO
+  replicas: 1
+  election:
+    backend: k8s-lease
+    leaseName: envector-backend
+    leaseDurationSeconds: 15
+    renewDeadlineSeconds: 10
+    retryPeriodSeconds: 2
   env:
     shardSize: 4096
   resources: {}
@@ -89,23 +149,44 @@ es2b:
   affinity: {}
   tolerations: []
 
-# Configuration for es2o service
-es2o:
-  name: es2o
+# Configuration for envector orchestrator service
+orchestrator:
+  # Use "orchestrator" if your release/chart name already includes "envector"
+  name: ""
   labels: {}
   image:
-    repository: cryptolabinc/es2o
-    tag: latest
+    repository: cryptolabinc/envector-orchestrator
+    tag: main
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 25121
     headlessSuffix: "-headless"
+  health:
+    enabled: true
+    port: 8080
+    liveness:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1 # Fail if it hangs for >1s
+      failureThreshold: 3 # Restart after 3 fails
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1 # Fail if it hangs for >1s
+      failureThreshold: 3 # Restart after 3 fails
   command: []
   logLevel: INFO
   replicas: 1
   election:
+    backend: k8s-lease
     lockID: "808707" # this value will be hashed internally
+    leaseName: envector-orchestrator
+    leaseDurationSeconds: 6
+    renewDeadlineSeconds: 4
+    retryPeriodSeconds: 1
   resources: {}
     # limits:
     #   cpu: "1"
@@ -117,31 +198,55 @@ es2o:
   affinity: {}
   tolerations: []
 
-# Configuration for es2c service
-es2c:
-  name: es2c
+# Configuration for envector compute service
+compute:
+  # Use "compute" if your release/chart name already includes "envector"
+  name: ""
   labels: {}
   variant: cpu
   image:
-    repository: cryptolabinc/es2c
-    tag: latest
+    repository: cryptolabinc/envector-compute
+    tag: main
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 25123
+    headlessSuffix: "-headless"
+  health:
+    enabled: true
+    port: 8080
+    liveness:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
   command: []
-  replicas: 2
+  replicas: 1
+  terminationGracePeriodSeconds: 120
+  election:
+    backend: k8s-lease
+    leaseName: envector-compute
+    leaseDurationSeconds: 6
+    renewDeadlineSeconds: 4
+    retryPeriodSeconds: 1
   env:
     useTopk: false
     host: "0.0.0.0"
     threadPoolScale: 4
-    numSearchHandler: 10
+    numSearchHandler: 4
   license:
     enabled: true
-    tokenPath: "/es2/license/token.jwt"
+    tokenPath: "/envector/license/token.jwt"
     # When true, also inject the token directly as an environment variable from the Secret
     injectAsEnv: false
-    envVarName: "ES2_LICENSE_TOKEN"
+    envVarName: "ENVECTOR_LICENSE_TOKEN"
     # When false, skip mounting the token file (useful if only env injection is desired)
     mountAsFile: true
     createSecret: true
@@ -157,9 +262,10 @@ es2c:
   #   cpu:
   #     limits:
   #       cpu: "4"
+  #       memory: "24Gi"
   #     requests:
   #       cpu: "2"
-  #       memory: "2Gi"
+  #       memory: "4Gi"
   #   gpu:
   #     limits:
   #       nvidia.com/gpu: 1
@@ -171,6 +277,249 @@ es2c:
   affinity: {}
   tolerations: []
 
+# Configuration for envector shaper service
+shaper:
+  enabled: true
+  name: ""
+  labels: {}
+  replicas: 1
+  terminationGracePeriodSeconds: 120
+  image:
+    repository: cryptolabinc/envector-shaper
+    tag: main
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 50052
+    headlessSuffix: "-headless"
+  health:
+    enabled: true
+    port: 8080
+    liveness:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 1
+      failureThreshold: 3
+  logLevel: INFO
+  election:
+    backend: ""
+    leaseName: envector-shaper
+    leaseDurationSeconds: 15
+    renewDeadlineSeconds: 10
+    retryPeriodSeconds: 2
+  env:
+    # Limit glibc malloc arenas to prevent memory retention (default: 8 * num_cpus)
+    mallocArenaMax: 2
+    # Maximum concurrent shaper jobs (split/merge)
+    maxWorkers: 1
+    # Per-job parallel upload workers for split row shards
+    splitUploadConcurrency: 1
+    # Per-job parallel download workers for merge row shards
+    mergeDownloadConcurrency: 1
+  license:
+    # When true, inject the license token from the compute license Secret.
+    enabled: true
+  resources: {}
+    #  limits:
+    #    cpu: "2"
+    #    memory: "8Gi"
+    # requests:
+    #     cpu: "1"
+    #     memory: "4Gi"
+
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+# Audit pipeline configuration
+# Deploys: Audit Service (gRPC), Redpanda (Kafka-compatible MQ), Vector sidecar on endpoint
+audit:
+  enabled: false
+  name: ""
+  labels: {}
+  image:
+    repository: envector-audit
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 50052
+  resources: {}
+    # limits:
+    #   cpu: "1"
+    #   memory: "1Gi"
+    # requests:
+    #   cpu: "0.25"
+    #   memory: "256Mi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # Auth settings (Phase 6 — default off for development)
+  auth:
+    requirePrincipal: false
+    oidcIssuer: ""
+    jwksUrl: ""
+    expectedIssuer: ""
+    allowedAudiences: ""
+  # Kafka / message queue settings
+  kafka:
+    topic: "envector.audit.events.v1"
+    groupId: "envector-audit-service"
+  # Audit storage bucket (reuses externalServices.storage credentials)
+  storage:
+    bucketName: "envector-audit"
+  # Vector log agent — runs as sidecar in the endpoint pod
+  logagent:
+    image:
+      repository: timberio/vector
+      tag: 0.53.0-debian
+      pullPolicy: IfNotPresent
+    resources: {}
+      # limits:
+      #   cpu: "0.5"
+      #   memory: "512Mi"
+      # requests:
+      #   cpu: "0.1"
+      #   memory: "128Mi"
+  # Redpanda — single-replica Kafka-compatible message queue
+  logmq:
+    name: ""
+    memory: "1G"  # Redpanda --memory flag (e.g. "512M" for constrained environments)
+    image:
+      repository: redpandadata/redpanda
+      tag: v25.3.10
+      pullPolicy: IfNotPresent
+    storage:
+      size: 10Gi
+      # storageClassName: ""  # use cluster default if empty
+    resources:
+      limits:
+        memory: "1Gi"
+      requests:
+        cpu: "0.5"
+        memory: "512Mi"
+
+# Key Management reference (optional)
+# Where the customer stores HE decryption keys. enVector compute does NOT
+# access these — IAM boundary enforced. Only the customer's decrypt service
+# (running under a separate SA) should have access.
+keyManagement:
+  # "secret-manager" or "" (customer-managed externally)
+  provider: ""
+  # Full Secret Manager resource name, e.g.:
+  #   projects/my-project/secrets/envector-he-keys
+  # Leave empty if managing keys externally (Vault, HSM, etc.)
+  secretRef: ""
+
+# Embedded PostgreSQL (Developer SKU / zero-prerequisite deploy)
+# When enabled, deploys a single-replica PostgreSQL StatefulSet in-cluster.
+# Not for production use — use Cloud SQL or external PostgreSQL for Prod.
+embeddedPostgres:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  user: envector
+  # password: auto-generated by Marketplace (GENERATED_PASSWORD).
+  # For standalone Helm, set explicitly: --set embeddedPostgres.password=<value>
+  password: ""
+  database: envector
+  storage:
+    size: 1Gi
+    # storageClassName: ""  # use cluster default if empty
+
+# Embedded MinIO (Developer SKU / zero-prerequisite deploy)
+# When enabled, deploys a single-replica MinIO StatefulSet in-cluster.
+# Not for production use — use GCS or external S3-compatible storage for Prod.
+embeddedMinio:
+  enabled: false
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2024-11-07T00-52-20Z"
+  rootUser: minioadmin
+  # rootPassword: auto-generated by Marketplace (GENERATED_PASSWORD).
+  # For standalone Helm, set explicitly: --set embeddedMinio.rootPassword=<value>
+  rootPassword: ""
+  storage:
+    size: 20Gi
+    # storageClassName: ""  # use cluster default if empty
+
+# Cloud SQL configuration (GCP Marketplace / GKE deployments)
+# When enabled, deploys Cloud SQL Auth Proxy and constructs DB URL automatically.
+# No password needed — uses IAM database authentication via workload identity.
+# Prerequisites:
+#   1. Cloud SQL instance with cloudsql.iam_authentication=on
+#   2. Node SA or workload identity SA has roles/cloudsql.client + roles/cloudsql.instanceUser
+cloudSQL:
+  enabled: false
+  instanceConnectionName: ""
+  database: "envector"
+  proxy:
+    image:
+      repository: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+      tag: "2"
+    port: 5432
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# GCP Marketplace billing & license
+# reportingSecret is auto-injected by the Marketplace deployer (REPORTING_SECRET
+# schema type). When set, ubbagent sidecar is enabled automatically and
+# Procurement API env vars are injected into compute/backend/shaper pods.
+# For non-Marketplace (standalone Helm) deploys, leave empty.
+reportingSecret: ""
+
+marketplace:
+  # CryptoLab's partner ID from GCP Producer Portal (Account Management > Settings).
+  partnerId: "001Kf00001CPDeXIAX"
+  # GCP Marketplace service name used for Service Control API entitlement check and ubbagent metering.
+  serviceName: "envector-sm.endpoints.heaan-public.cloud.goog"
+
+# Usage-based billing agent (GCP Marketplace)
+# ubbagent sidecar runs in each compute pod and reports "1 active replica"
+# per reporting interval. Google aggregates across pods and invoices customer.
+# Activation: controlled by reportingSecret (not ubbagent.enabled).
+ubbagent:
+  image:
+    repository: gcr.io/cloud-marketplace-tools/metering/ubbagent
+    tag: latest
+  # Metric reported to Google Service Control
+  metric:
+    name: envector/compute_hour
+    # Heartbeat interval in seconds (each replica reports 1 unit per interval)
+    intervalSeconds: 3600
+  # "servicecontrol" reports to Google (production Marketplace billing).
+  # "disk" writes local files (only for local/mpdev testing without real sub).
+  endpoint: servicecontrol
+  # NOTE: during mpdev verify (fake reportingSecret), override to disk:
+  #   --set ubbagent.endpoint=disk
+
+# Observability (OpenTelemetry)
+# When enabled, creates a shared otel-config ConfigMap and injects it into all
+# service pods via envFrom.  OTEL_SERVICE_NAME is set per-service automatically.
+observability:
+  enabled: false
+  tracing:
+    enabled: false
+    # OTLP collector endpoint, e.g. "http://otel-collector.tracing:4317"
+    endpoint: ""
+    # OTLP export protocol: "grpc" (default, HTTP/2) or "http/protobuf" (HTTP/1.1)
+    protocol: grpc
+    # Set to true when the collector endpoint does not use TLS
+    insecure: true
+
 # Ingress configuration
 ingress:
   enabled: false
@@ -180,17 +529,17 @@ ingress:
     # kubernetes.io/tls-acme: "true"
     # cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: es2.local
+    - host: envector.local
       paths:
         - path: /
           pathType: Prefix
           service:
-            name: es2e
+            name: ""
             port: 50050
   tls: []
-    # - secretName: es2-tls
+    # - secretName: envector-tls
     #   hosts:
-    #     - es2.local
+    #     - envector.local
 
 # External Secrets Operator (ESO) integration
 # Each secret can be enabled independently
@@ -212,7 +561,7 @@ externalSecrets:
     refreshInterval: 1m
     data: []
       # Example:
-      # - secretKey: ES2_DB_SERVICE_URL
+      # - secretKey: ENVECTOR_DB_URL
       #   remoteRef:
       #     key: "prod/app/db"      # remote secret name/path (e.g., AWS SM, Vault, etc.)
       #     property: "db_url"       # optional: key/property within the remote secret
@@ -229,11 +578,11 @@ externalSecrets:
     refreshInterval: 1m
     data: []
       # Examples:
-      # - secretKey: ES2_STORAGE_SERVICE_USER
+      # - secretKey: ENVECTOR_STORAGE_USER
       #   remoteRef:
       #     key: "prod/minio"
       #     property: "accessKey"
-      # - secretKey: ES2_STORAGE_SERVICE_PASSWORD
+      # - secretKey: ENVECTOR_STORAGE_PASSWORD
       #   remoteRef:
       #     key: "prod/minio"
       #     property: "secretKey"
@@ -245,17 +594,17 @@ externalSecrets:
       kind: ""
       name: ""
     # Optional: override the target Secret name created by ESO
-    # Defaults to the same Secret name used by es2c ("<fullname>-es2c-license")
+    # Defaults to the same Secret name used by compute ("<fullname>-envector-compute-license")
     name: ""
     refreshInterval: 1m
     # Key inside the target Secret where the token will be stored
     secretKey: "token.jwt"
     remoteRef:
-      key: ""        # remote secret name/path containing the license token
-      property: ""   # optional: key/property within the remote secret
-      version: ""    # optional: version or versionStage for AWS Secrets Manager
+      key: "" # remote secret name/path containing the license token
+      property: "" # optional: key/property within the remote secret
+      version: "" # optional: version or versionStage for AWS Secrets Manager
       decodingStrategy: "" # optional: decodingStrategy if backend requires it
-      metadataPolicy: ""   # optional: metadataPolicy (e.g., for AWS SM)
+      metadataPolicy: "" # optional: metadataPolicy (e.g., for AWS SM)
 
 # Standard Kubernetes Secret integration
 # Each secret can be configured independently
