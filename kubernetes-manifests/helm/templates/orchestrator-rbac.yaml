@@ -5,6 +5,7 @@ kind: Role
 metadata:
   name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-lease
   labels:
+    app: {{ include "envector-chart.fullname" . }}
     {{- include "envector-chart.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["coordination.k8s.io"]
@@ -19,6 +20,7 @@ kind: RoleBinding
 metadata:
   name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}-lease
   labels:
+    app: {{ include "envector-chart.fullname" . }}
     {{- include "envector-chart.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount

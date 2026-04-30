@@ -46,7 +46,7 @@ services:
       # Limit glibc malloc arenas to prevent memory retention (default: 8 * num_cpus)
       MALLOC_ARENA_MAX: "2"
       # Development settings
-      ENVECTOR_SHAPER_MAX_WORKERS: "${ENVECTOR_SHAPER_MAX_WORKERS:-16}"
+      ENVECTOR_SHAPER_MAX_WORKERS: "${ENVECTOR_SHAPER_MAX_WORKERS:-1}"
       ENVECTOR_SHAPER_SPLIT_UPLOAD_CONCURRENCY: "${ENVECTOR_SHAPER_SPLIT_UPLOAD_CONCURRENCY:-1}"
       ENVECTOR_SHAPER_MERGE_DOWNLOAD_CONCURRENCY: "${ENVECTOR_SHAPER_MERGE_DOWNLOAD_CONCURRENCY:-1}"
       ENVECTOR_SHAPER_CLEANUP_PERIOD: "${ENVECTOR_SHAPER_CLEANUP_PERIOD:-1h}"
@@ -138,7 +138,7 @@ services:
           cpus: '4.0'
           memory: 24G
         reservations:
-          cpus: '4.0'
+          cpus: '2.0'
           memory: 16G
     restart: always
     depends_on:

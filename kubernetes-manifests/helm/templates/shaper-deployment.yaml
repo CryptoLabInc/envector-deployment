@@ -189,23 +189,11 @@ spec:
               value: {{ include "envector-chart.shaperName" . | quote }}
             {{- end }}
           {{- if .Values.reportingSecret }}
-            - name: ENVECTOR_MARKETPLACE_ENTITLEMENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.reportingSecret }}
-                  key: entitlement-id
             - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.reportingSecret }}
                   key: consumer-id
-            - name: ENVECTOR_MARKETPLACE_REPORTING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.reportingSecret }}
-                  key: reporting-key
-            - name: ENVECTOR_MARKETPLACE_PARTNER_ID
-              value: {{ .Values.marketplace.partnerId | quote }}
           {{- end }}
           {{- if .Values.shaper.resources }}
           resources:
@@ -249,6 +237,9 @@ spec:
         {{- end }}
         {{- with .Values.shaper.labels }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.reportingSecret }}
+        goog-partner-solution: isol_plb32_001kf00001cpdexiax_z2tshwkesg6ard35ayqkkenlgep7kpvo
         {{- end }}
     spec:
       serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
@@ -361,23 +352,11 @@ spec:
               value: {{ include "envector-chart.shaperName" . | quote }}
             {{- end }}
           {{- if .Values.reportingSecret }}
-            - name: ENVECTOR_MARKETPLACE_ENTITLEMENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.reportingSecret }}
-                  key: entitlement-id
             - name: ENVECTOR_MARKETPLACE_CONSUMER_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.reportingSecret }}
                   key: consumer-id
-            - name: ENVECTOR_MARKETPLACE_REPORTING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.reportingSecret }}
-                  key: reporting-key
-            - name: ENVECTOR_MARKETPLACE_PARTNER_ID
-              value: {{ .Values.marketplace.partnerId | quote }}
           {{- end }}
           {{- if .Values.shaper.resources }}
           resources:

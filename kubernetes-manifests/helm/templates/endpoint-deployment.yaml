@@ -39,6 +39,9 @@ spec:
         {{- with .Values.endpoint.labels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+        {{- if .Values.reportingSecret }}
+        goog-partner-solution: isol_plb32_001kf00001cpdexiax_z2tshwkesg6ard35ayqkkenlgep7kpvo
+        {{- end }}
     spec:
       serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
