@@ -1,4 +1,10 @@
-{{- if eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease" }}
+{{- /*
+  Lease Role/RoleBinding only render when active-standby HA is actually
+  in effect: backend must be k8s-lease AND replicas must be >= 2. Mirrors
+  $computeLeaderOnlyHA in compute-deployment.yaml so a single-replica
+  install does not create unused RBAC that the cleanup test would flag.
+*/ -}}
+{{- if and (eq (.Values.compute.election.backend | default "") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

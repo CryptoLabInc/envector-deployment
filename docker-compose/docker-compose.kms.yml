@@ -1,0 +1,214 @@
+# docker-compose.kms.yml
+# KMS service with MinIO (pub key files) and Vault (sec key files).
+# Usage (via start script):  bash scripts/start_envector.sh --kms
+# Usage (standalone):        cd deployment/docker-compose && docker compose -f docker-compose.ca.yml -f docker-compose.kms.yml up
+#
+# Bind-mount paths use ${START_ENVECTOR_COMPOSE_DIR:-.} so they resolve correctly
+# both when start_envector.sh sets --project-directory to repo root and when
+# running standalone from this directory.
+#
+# TLS mode (default): the shared CA overlay owns step-ca, cert-init requests
+# Vault/KMS certificates from step-ca, Vault uses HTTPS, and envector-kms
+# verifies Vault via the CA bundle.
+# To share MinIO with the core MSA stack, override ENVECTOR_KMS_MINIO_ENDPOINT
+# to point to the shared storage service instead.
+#
+# envector-kms-tee container separation (gap-004 §2.1.2, §5.1, §6.1).
+# Two images, one binary each:
+#   - envector-kms     (build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
+#   - envector-kms-tee (build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
+# Wire-level isolation: envector-kms-tee uses expose: not ports:, so it
+# is reachable only on the compose network (gap-004 §5.1).
+#
+# Vault and EVI runtime configuration belongs to envector-kms-tee. The
+# control plane reaches those paths only through the internal kms-tee gRPC
+# boundary.
+#
+# Optional networking hardening (gap-004 §5.1, deferred):
+#   networks:
+#     kms-internal:        # envector-kms-tee + kms-vault + envector-kms
+#     default:             # envector-kms only (external API exposure)
+services:
+  kms-storage:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+    # Host publishing is optional; the KMS service reaches MinIO over the
+    # compose network, so keep this disabled by default.
+    # ports:
+    #   - ${ENVECTOR_KMS_MINIO_HOST_PORT:-0}:9000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # volumes:
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/kms-minio-data:/data
+    restart: on-failure:10
+
+  cert-init:
+    image: smallstep/step-cli:0.30.2
+    user: "0:0"
+    entrypoint: ["/cert-init-entrypoint.sh"]
+    environment:
+      CERTS_DIR: /certs
+      STEP_CA_URL: "${STEP_CA_URL:-https://step-ca:9000}"
+      STEP_CA_PROVISIONER: "${STEP_CA_PROVISIONER:-envector-workloads}"
+      STEP_CA_PASSWORD_FILE: /step-secrets/step_ca_password
+      VAULT_TLS_CN: "${VAULT_TLS_CN:-kms-vault}"
+      VAULT_TLS_DNS: "${VAULT_TLS_DNS:-kms-vault,localhost}"
+      VAULT_TLS_IP: "${VAULT_TLS_IP:-127.0.0.1}"
+      KMS_TEE_TLS_CN: "${KMS_TEE_TLS_CN:-envector-kms-tee}"
+      KMS_TEE_TLS_DNS: "${KMS_TEE_TLS_DNS:-envector-kms-tee}"
+      KMS_API_TLS_CN: "${KMS_API_TLS_CN:-envector-kms}"
+      KMS_API_TLS_DNS: "${KMS_API_TLS_DNS:-envector-kms,localhost}"
+      KMS_API_TLS_IP: "${KMS_API_TLS_IP:-127.0.0.1}"
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/cert-init-entrypoint.sh:/cert-init-entrypoint.sh:ro
+      - envector-ca-secrets:/step-secrets:ro
+      - envector-ca-certs:/certs/ca:ro    ## If you want to use the cert volume, comment this out and enable the line below.
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
+      - kms-vault-certs:/certs/vault
+      - kms-tee-certs:/certs/kms-tee
+      - kms-api-certs:/certs/kms-api
+    depends_on:
+      step-ca:
+        condition: service_healthy
+    restart: "no"
+
+  kms-vault:
+    image: hashicorp/vault:1.20
+    entrypoint:
+      - vault
+    command: server -config=/vault/config/kms-vault.hcl
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-vault-tls.hcl:/vault/config/kms-vault.hcl:ro
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/kms-vault-data:/vault/file
+      # Persist Vault storage across container recreation (matches the notls profile).
+      - kms-vault-data:/vault/file
+      - envector-ca-certs:/certs/ca:ro    ## If you want to use the cert volume, comment this out and enable the line below.
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
+      - kms-vault-certs:/certs/vault:ro
+    healthcheck:
+      test: ["CMD-SHELL", "vault status -address=https://127.0.0.1:8201 -ca-cert=/certs/ca/root_ca.crt >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+    # Disable core dumps so secret key material can't leak into a dump file.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    restart: on-failure:10
+
+  envector-kms:
+    image: "${ENVECTOR_KMS_IMAGE_NAME:-envector-kms}:${ENVECTOR_KMS_TAG:-latest}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    ports:
+      - ${ENVECTOR_KMS_GRPC_HOST_PORT:-0}:${ENVECTOR_KMS_GRPC_PORT:-50060}
+      - ${ENVECTOR_KMS_HTTP_HOST_PORT:-0}:${ENVECTOR_KMS_HTTP_PORT:-8080}
+    environment:
+      ENVECTOR_KMS_PORT: "${ENVECTOR_KMS_GRPC_PORT:-50060}"
+      ENVECTOR_KMS_HTTP_PORT: "${ENVECTOR_KMS_HTTP_PORT:-8080}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_KEY_DIR: "/data/keys"
+      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip2}"
+      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
+      ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
+      ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_SECRET_KEY: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_BUCKET: "${ENVECTOR_KMS_MINIO_BUCKET:-kms-keys}"
+      ENVECTOR_KMS_MINIO_USE_SSL: "false"
+      ENVECTOR_KMS_TEE_ADDR: "envector-kms-tee:${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      ENVECTOR_KMS_AUTH_JWKS_URL: "${ENVECTOR_KMS_AUTH_JWKS_URL:-}"
+      ENVECTOR_KMS_AUTH_OIDC_ISSUER: "${ENVECTOR_KMS_AUTH_OIDC_ISSUER:-}"
+      ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES: "${ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES:-}"
+      ENVECTOR_KMS_AUTH_ROLE_CLAIM: "${ENVECTOR_KMS_AUTH_ROLE_CLAIM:-envector_roles}"
+      ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM: "${ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM:-sub}"
+      ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON: "${ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON:-}"
+      ENVECTOR_JWT_LEEWAY_SECONDS: "${ENVECTOR_JWT_LEEWAY_SECONDS:-0}"
+      ENVECTOR_KMS_HTTP_TLS_CERT: /certs/kms-api/kms-api.crt
+      ENVECTOR_KMS_HTTP_TLS_KEY: /certs/kms-api/kms-api.key
+      ENVECTOR_KMS_GRPC_TLS_CERT: /certs/kms-api/kms-api.crt
+      ENVECTOR_KMS_GRPC_TLS_KEY: /certs/kms-api/kms-api.key
+      ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS: "${ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS:-true}"
+    volumes:
+      - kms-api-certs:/certs/kms-api:ro
+    depends_on:
+      kms-storage:
+        condition: service_healthy
+      kms-vault:
+        condition: service_healthy
+      # service_started (not service_healthy): envector-kms-tee starts
+      # NOT_SERVING (bootstrap_required=true) until init_secretmgr.sh
+      # routes Bootstrap admin RPC through envector-kms → envector-kms-tee.
+      # Waiting on service_healthy would deadlock because the admin call
+      # is what flips kms-tee to SERVING. teeclient.New uses lazy
+      # grpc.NewClient so this is safe (gap-004 §6.1, §6.2.2).
+      envector-kms-tee:
+        condition: service_started
+    # Disable core dumps so secret key material can't leak into a dump file.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    restart: on-failure:10
+
+  envector-kms-tee:
+    image: "${ENVECTOR_KMS_TEE_IMAGE_NAME:-envector-kms-tee}:${ENVECTOR_KMS_TEE_TAG:-${ENVECTOR_KMS_TAG:-latest}}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    # HOST PUBLISH FORBIDDEN (gap-004 §5.1). expose: only so the
+    # container is reachable solely on the compose network.
+    expose:
+      - "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+    environment:
+      ENVECTOR_KMS_TEE_GRPC_PORT: "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
+      ENVECTOR_KMS_DECRYPT_TOPK_JOBS: "${ENVECTOR_KMS_DECRYPT_TOPK_JOBS:-1}"
+      # Bounds the decrypt worker cap above: ENVECTOR_KMS_DECRYPT_TOPK_JOBS is
+      # clamped to GOMAXPROCS so workers can't oversubscribe and crash EVI's
+      # parallel decrypt. Set to the CPUs allocated to this container (e.g. when
+      # adding a deploy cpus/cpuset limit); empty = host CPU count.
+      GOMAXPROCS: "${ENVECTOR_KMS_TEE_GOMAXPROCS:-}"
+      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-https://kms-vault:8200}"
+      ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
+      ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
+      ENVECTOR_KMS_TRANSIT_MOUNT: "${ENVECTOR_KMS_TRANSIT_MOUNT:-transit}"
+      KMS_VAULT_CACERT: /certs/ca/root_ca.crt
+      KMS_VAULT_CLIENT_CERT: /certs/kms-tee/kms-tee.crt
+      KMS_VAULT_CLIENT_KEY: /certs/kms-tee/kms-tee.key
+      ENVECTOR_KMS_REQUIRE_VAULT_TLS: "${ENVECTOR_KMS_REQUIRE_VAULT_TLS:-true}"
+    volumes:
+      - envector-ca-certs:/certs/ca:ro  ## If you want to use the cert volume, comment this out and enable the line below.
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
+      - kms-tee-certs:/certs/kms-tee:ro
+    depends_on:
+      kms-vault:
+        condition: service_healthy
+    # Disable core dumps so secret key material can't leak into a dump file.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    restart: on-failure:10
+
+volumes:
+  kms-keys:
+  kms-minio-data:
+  kms-vault-data:
+  kms-vault-certs:
+  kms-tee-certs:
+  kms-api-certs:
+
+# networks:
+#   default:

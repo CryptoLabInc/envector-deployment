@@ -1,8 +1,9 @@
 # envector-chart/templates/service.yaml
 {{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
 {{- $orchestratorLeaderOnlyHA := and (eq $electionBackend "k8s-lease") (gt (int (.Values.orchestrator.replicas | default 1)) 1) }}
-{{- $backendLeaderOnlyHA := and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
-{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
+{{- /* Leader-only for any k8s-lease backend, incl. replicas=1. Keep in sync with backend-deployment.yaml. */ -}}
+{{- $backendLeaderOnlyHA := eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease" }}
+{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
 {{- $shaperLeaderOnlyHA := and (eq (.Values.shaper.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.shaper.replicas | default 1)) 1) }}
 ---
 apiVersion: v1

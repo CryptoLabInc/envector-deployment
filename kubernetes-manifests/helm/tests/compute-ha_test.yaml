@@ -22,6 +22,19 @@ tests:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 120
 
+  - it: defaults to n-active self-registration even with multiple replicas
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.replicas: 2
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_COMPUTE_HA_BACKEND")].value
+          value: ""
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/ready
+
   - it: selects only the active leader pod for the compute service in ha mode
     template: templates/service.yaml
     documentIndex: 3

@@ -1,9 +1,10 @@
-{{- if and (eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
+{{- if and (eq (.Values.compute.election.backend | default "") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}
   labels:
+    app: {{ include "envector-chart.fullname" . }}
     {{- include "envector-chart.labels" . | nindent 4 }}
 spec:
   minAvailable: 1

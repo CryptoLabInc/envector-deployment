@@ -1,0 +1,25 @@
+# docker-compose.network.yml
+#
+# Pins the compose project's default network to an external, named docker
+# network (`ev_network`) so the network name is stable across projects/runs
+# and other stacks/containers can attach to it by name.
+#
+# Prereq (one-time): docker network create ev_network
+#
+# Usage: append this file as the LAST -f arg so its `default` definition
+# overrides the placeholder `default:` blocks in the other overlays, e.g.
+#
+#   docker compose \
+#     -f docker-compose.envector.yml \
+#     -f docker-compose.infra.yml \
+#     -f docker-compose.network.yml \
+#     up -d
+#
+# Every service in the other overlays uses the implicit `default` network
+# (none declare per-service `networks:`), so this single override attaches
+# all of them to `ev_network` without enumerating services.
+
+networks:
+  default:
+    name: "${ENVECTOR_EXTERNAL_NETWORK_NAME:-ev_network}"
+    external: true

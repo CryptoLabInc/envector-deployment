@@ -5,6 +5,7 @@ kind: PodDisruptionBudget
 metadata:
   name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.orchestratorName" . }}
   labels:
+    app: {{ include "envector-chart.fullname" . }}
     {{- include "envector-chart.labels" . | nindent 4 }}
 spec:
   minAvailable: 1

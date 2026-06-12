@@ -45,3 +45,37 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /health/ready
+
+  # replicas=1 + k8s-lease must use pod-level readiness so the new follower
+  # becomes Ready during a rolling update and the rollout is not deadlocked.
+  - it: uses pod-level readiness for single-replica k8s lease
+    template: templates/backend-deployment.yaml
+    set:
+      backend.election.backend: k8s-lease
+      backend.replicas: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health/pod-ready
+
+  - it: selects only the active leader pod for single-replica k8s lease
+    template: templates/service.yaml
+    documentIndex: 1
+    set:
+      backend.election.backend: k8s-lease
+      backend.replicas: 1
+    asserts:
+      - equal:
+          path: spec.selector["envector.ai/backend-leader"]
+          value: "true"
+
+  # The PDB stays gated on replicas>1: a minAvailable=1 PDB on a single replica
+  # would block voluntary disruptions / node drains (a different deadlock).
+  - it: does not render a backend PDB for single-replica k8s lease
+    template: templates/backend-pdb.yaml
+    set:
+      backend.election.backend: k8s-lease
+      backend.replicas: 1
+    asserts:
+      - hasDocuments:
+          count: 0

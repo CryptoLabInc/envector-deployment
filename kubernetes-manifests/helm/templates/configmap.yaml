@@ -53,6 +53,7 @@ data:
   ENVECTOR_AUTH_ROLE_CLAIM: {{ .Values.endpoint.auth.roleClaim | default "envector_roles" | quote }}
   ENVECTOR_AUTH_PRINCIPAL_CLAIM: {{ .Values.endpoint.auth.principalClaim | default "principal_id" | quote }}
   ENVECTOR_AUTH_CAPABILITY_POLICY_JSON: {{ .Values.endpoint.auth.capabilityPolicyJson | default "" | quote }}
+  ENVECTOR_JWT_LEEWAY_SECONDS: {{ .Values.endpoint.auth.jwtLeewaySeconds | default 0 | quote }}
   {{- if .Values.endpoint.auth.enabled }}
   ENVECTOR_AUTH_OIDC_ISSUER: {{ .Values.endpoint.auth.oidcIssuer | default "" | quote }}
   ENVECTOR_AUTH_ALLOWED_AUDIENCES: {{ join "," (.Values.endpoint.auth.allowedAudiences | default (list)) | quote }}

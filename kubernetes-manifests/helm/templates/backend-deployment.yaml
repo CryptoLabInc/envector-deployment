@@ -1,4 +1,13 @@
-{{- $backendLeaderOnlyHA := and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
+{{- /*
+  Leader-only readiness + leader-only Service routing whenever k8s-lease election
+  is enabled, independent of replica count. At replicas=1 this lets the new
+  follower pod pass /health/pod-ready during a rolling update so the rollout can
+  proceed and terminate the old leader, which releases the lease (ReleaseOnCancel)
+  and lets the new pod take over leadership. Without this, replicas=1 used the strict
+  /health/ready probe and the new follower stayed 503 forever, deadlocking the rollout.
+  The "HA" suffix is kept for naming parity with the compute/orchestrator/shaper vars.
+*/ -}}
+{{- $backendLeaderOnlyHA := eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

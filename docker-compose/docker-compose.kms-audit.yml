@@ -1,0 +1,104 @@
+# docker-compose.kms-audit.yml
+# Dedicated audit pipeline for envector-kms. Shares producer library with
+# envector audit, but Kafka topic / Redpanda / Vector / audit-svc / S3 bucket
+# are isolated from the envector audit overlay.
+services:
+  envector-kms:
+    environment:
+      AUDIT_LOG_SINK: "${ENVECTOR_KMS_AUDIT_LOG_SINK:-file}"
+      AUDIT_LOG_DIR: "${ENVECTOR_KMS_AUDIT_LOG_DIR:-/var/log/envector/audit}"
+      AUDIT_LOG_INCLUDE_IDENTITY_CLAIMS: "${ENVECTOR_KMS_AUDIT_LOG_INCLUDE_IDENTITY_CLAIMS:-false}"
+    volumes:
+      - kms-auditlogs:${ENVECTOR_KMS_AUDIT_LOG_DIR:-/var/log/envector/audit}
+    depends_on:
+      kms-audit-logmq:
+        condition: service_healthy
+      kms-audit-logagent:
+        condition: service_started
+
+  kms-audit:
+    image: "${ENVECTOR_AUDIT_IMAGE_NAME:-envector-audit}:${ENVECTOR_AUDIT_TAG:-latest}"
+    restart: on-failure:10
+    ports:
+      - "${ENVECTOR_KMS_AUDIT_HOST_PORT:-50053}:${ENVECTOR_KMS_AUDIT_PORT:-50053}"
+    extra_hosts:
+        - "host.docker.internal:host-gateway"
+    environment:
+      ENVECTOR_AUDIT_PORT: "${ENVECTOR_KMS_AUDIT_PORT:-50053}"
+      AUDIT_EXPORT_REQUIRE_PRINCIPAL: "${ENVECTOR_KMS_AUDIT_EXPORT_REQUIRE_PRINCIPAL:-true}"
+      ENVECTOR_AUDIT_AUTH_OIDC_ISSUER: "${ENVECTOR_KMS_AUDIT_AUTH_OIDC_ISSUER:-}"
+      ENVECTOR_AUDIT_AUTH_JWKS_URL: "${ENVECTOR_KMS_AUDIT_AUTH_JWKS_URL:-}"
+      ENVECTOR_AUDIT_AUTH_EXPECTED_ISSUER: "${ENVECTOR_KMS_AUDIT_AUTH_EXPECTED_ISSUER:-}"
+      ENVECTOR_AUDIT_AUTH_ALLOWED_AUDIENCES: "${ENVECTOR_KMS_AUDIT_AUTH_ALLOWED_AUDIENCES:-}"
+      ENVECTOR_JWT_LEEWAY_SECONDS: "${ENVECTOR_JWT_LEEWAY_SECONDS:-0}"
+      ENVECTOR_AUDIT_KAFKA_BOOTSTRAP_SERVERS: "${ENVECTOR_KMS_AUDIT_KAFKA_BOOTSTRAP_SERVERS:-kms-audit-logmq:9092}"
+      ENVECTOR_AUDIT_KAFKA_TOPIC: "${ENVECTOR_KMS_AUDIT_KAFKA_TOPIC:-envector.kms.audit.events.v1}"
+      ENVECTOR_AUDIT_KAFKA_GROUP_ID: "${ENVECTOR_KMS_AUDIT_KAFKA_GROUP_ID:-envector-kms-audit-service}"
+      ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_KMS_AUDIT_STORAGE_PROVIDER:-s3}"
+      ENVECTOR_STORAGE_ADDRESS: "${ENVECTOR_KMS_AUDIT_STORAGE_ADDRESS:-kms-storage:9000}"
+      ENVECTOR_STORAGE_BUCKET_NAME: "${ENVECTOR_KMS_AUDIT_STORAGE_BUCKET_NAME:-envector-kms-audit}"
+      ENVECTOR_STORAGE_USER: "${ENVECTOR_KMS_AUDIT_STORAGE_USER:-${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}}"
+      ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_KMS_AUDIT_STORAGE_PASSWORD:-${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}}"
+      ENVECTOR_STORAGE_SECURE: "${ENVECTOR_KMS_AUDIT_STORAGE_SECURE:-false}"
+      ENVECTOR_STORAGE_REGION: "${ENVECTOR_KMS_AUDIT_STORAGE_REGION:-us-east-1}"
+    depends_on:
+      kms-audit-logmq:
+        condition: service_healthy
+      kms-storage:
+        condition: service_healthy
+      # keycloak: omitted so this overlay does not require the keycloak overlay.
+
+  kms-audit-logagent:
+    image: timberio/vector:0.53.0-debian
+    restart: on-failure:10
+    command: ["--config", "/etc/vector/vector.yaml"]
+    environment:
+      # Vector config reads ENVECTOR_AUDIT_*; ENVECTOR_KMS_AUDIT_* on the host
+      # is the public knob, so a global envector audit setting cannot bleed
+      # into the KMS pipeline.
+      ENVECTOR_AUDIT_KAFKA_BOOTSTRAP_SERVERS: "${ENVECTOR_KMS_AUDIT_KAFKA_BOOTSTRAP_SERVERS:-kms-audit-logmq:9092}"
+      ENVECTOR_AUDIT_KAFKA_TOPIC: "${ENVECTOR_KMS_AUDIT_KAFKA_TOPIC:-envector.kms.audit.events.v1}"
+      ENVECTOR_AUDIT_IGNORE_CHECKPOINTS: "${ENVECTOR_KMS_AUDIT_IGNORE_CHECKPOINTS:-false}"
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/audit/kms-audit-vector.yaml:/etc/vector/vector.yaml:ro
+      - kms-auditlogs:${ENVECTOR_KMS_AUDIT_LOG_DIR:-/var/log/envector/audit}:ro
+      - kms-audit-logagent-data:/vector-data-dir
+    depends_on:
+      kms-audit-logmq:
+        condition: service_healthy
+
+  kms-audit-logmq:
+    image: redpandadata/redpanda:v25.3.10
+    restart: on-failure:10
+    entrypoint: ["/bin/sh", "/scripts/redpanda-init.sh"]
+    environment:
+      ENVECTOR_AUDIT_KAFKA_PORT: "${ENVECTOR_KMS_AUDIT_KAFKA_PORT:-9092}"
+      ENVECTOR_AUDIT_KAFKA_TOPIC: "${ENVECTOR_KMS_AUDIT_KAFKA_TOPIC:-envector.kms.audit.events.v1}"
+    command:
+      - rpk
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --default-log-level=${ENVECTOR_KMS_AUDIT_LOGMQ_DEFAULT_LOG_LEVEL:-warn}
+      - --kafka-addr=PLAINTEXT://0.0.0.0:${ENVECTOR_KMS_AUDIT_KAFKA_PORT:-9092}
+      - --advertise-kafka-addr=PLAINTEXT://kms-audit-logmq:${ENVECTOR_KMS_AUDIT_KAFKA_PORT:-9092}
+      - --pandaproxy-addr=PLAINTEXT://0.0.0.0:${ENVECTOR_KMS_AUDIT_PANDAPROXY_PORT:-9091}
+      - --advertise-pandaproxy-addr=PLAINTEXT://kms-audit-logmq:${ENVECTOR_KMS_AUDIT_PANDAPROXY_PORT:-9091}
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/audit/redpanda-init.sh:/scripts/redpanda-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info --brokers=localhost:${ENVECTOR_KMS_AUDIT_KAFKA_PORT:-9092} >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  kms-auditlogs:
+  kms-audit-logagent-data:
+
+networks:
+  default:
