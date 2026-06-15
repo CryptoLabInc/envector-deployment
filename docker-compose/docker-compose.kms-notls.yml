@@ -1,0 +1,97 @@
+# docker-compose.kms-notls.yml
+# KMS service without TLS — Vault listens on plain HTTP, no mTLS between services.
+# Usage (via start script):  bash scripts/start_envector.sh --kms-notls
+# Usage (standalone):        cd deployment/docker-compose && docker compose -f docker-compose.kms-notls.yml up
+#
+# For TLS mode use docker-compose.kms.yml with the CA overlay:
+#   bash scripts/start_envector.sh --kms   (default, TLS)
+services:
+  kms-storage:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  kms-vault:
+    image: hashicorp/vault:1.20
+    entrypoint:
+      - vault
+    command: server -config=/vault/config/kms-vault.hcl
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-vault.hcl:/vault/config/kms-vault.hcl:ro
+      - kms-vault-data:/vault/file
+    healthcheck:
+      test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200 >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+
+  envector-kms:
+    image: "${ENVECTOR_KMS_IMAGE_NAME:-envector-kms}:${ENVECTOR_KMS_TAG:-latest}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    ports:
+      - ${ENVECTOR_KMS_GRPC_HOST_PORT:-0}:${ENVECTOR_KMS_GRPC_PORT:-50060}
+      - ${ENVECTOR_KMS_HTTP_HOST_PORT:-0}:${ENVECTOR_KMS_HTTP_PORT:-8080}
+    environment:
+      ENVECTOR_KMS_PORT: "${ENVECTOR_KMS_GRPC_PORT:-50060}"
+      ENVECTOR_KMS_HTTP_PORT: "${ENVECTOR_KMS_HTTP_PORT:-8080}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_KEY_DIR: "/data/keys"
+      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip2}"
+      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
+      ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
+      ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_SECRET_KEY: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_BUCKET: "${ENVECTOR_KMS_MINIO_BUCKET:-kms-keys}"
+      ENVECTOR_KMS_MINIO_USE_SSL: "false"
+      ENVECTOR_KMS_TEE_ADDR: "envector-kms-tee:${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      ENVECTOR_KMS_AUTH_JWKS_URL: "${ENVECTOR_KMS_AUTH_JWKS_URL:-}"
+      ENVECTOR_KMS_AUTH_OIDC_ISSUER: "${ENVECTOR_KMS_AUTH_OIDC_ISSUER:-}"
+      ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES: "${ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES:-}"
+      ENVECTOR_KMS_AUTH_ROLE_CLAIM: "${ENVECTOR_KMS_AUTH_ROLE_CLAIM:-envector_roles}"
+      ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM: "${ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM:-sub}"
+      ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON: "${ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON:-}"
+      ENVECTOR_JWT_LEEWAY_SECONDS: "${ENVECTOR_JWT_LEEWAY_SECONDS:-0}"
+    depends_on:
+      kms-storage:
+        condition: service_healthy
+      kms-vault:
+        condition: service_healthy
+      envector-kms-tee:
+        condition: service_started
+    restart: always
+
+  envector-kms-tee:
+    image: "${ENVECTOR_KMS_TEE_IMAGE_NAME:-envector-kms-tee}:${ENVECTOR_KMS_TEE_TAG:-${ENVECTOR_KMS_TAG:-latest}}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    expose:
+      - "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+    environment:
+      ENVECTOR_KMS_TEE_GRPC_PORT: "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
+      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-http://kms-vault:8200}"
+      ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
+      ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
+      ENVECTOR_KMS_TRANSIT_MOUNT: "${ENVECTOR_KMS_TRANSIT_MOUNT:-transit}"
+    depends_on:
+      kms-vault:
+        condition: service_healthy
+    restart: always
+
+volumes:
+  kms-keys:
+  kms-minio-data:
+  kms-vault-data:

@@ -1,0 +1,64 @@
+# docker-compose.ca.yml
+# Shared local CA overlay for envector docker-compose deployments.
+# step-ca owns the local CA and publishes the root CA bundle through the
+# envector-ca-certs volume. Service-specific cert-init jobs should request
+# certificates from step-ca and mount only the cert/key volumes they need.
+#
+# Usage (via start script):  bash scripts/start_envector.sh --pki
+# Usage (standalone):        cd deployment/docker-compose && docker compose -f docker-compose.ca.yml up
+
+services:
+  step-ca-volume-init:
+    image: smallstep/step-ca:0.30.2
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /home/step /step-secrets /certs/ca
+        chown -R step:step /home/step /step-secrets /certs/ca
+        chmod 700 /step-secrets
+        chmod 755 /certs/ca
+    volumes:
+      - envector-ca-data:/home/step
+      - envector-ca-secrets:/step-secrets
+      - envector-ca-certs:/certs/ca   ## If you want to use the cert volume, comment this out and enable the line below.
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca
+    restart: "no"
+
+  step-ca:
+    image: smallstep/step-ca:0.30.2
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/envector-step-ca-entrypoint.sh
+    environment:
+      STEP_CA_HOME: /home/step
+      STEP_CA_NAME: "${STEP_CA_NAME:-envector-local-ca}"
+      STEP_CA_DNS: "${STEP_CA_DNS:-step-ca,localhost,127.0.0.1}"
+      STEP_CA_ADDRESS: "${STEP_CA_ADDRESS:-:9000}"
+      STEP_CA_PROVISIONER: "${STEP_CA_PROVISIONER:-envector-workloads}"
+      STEP_CA_PASSWORD: "${STEP_CA_PASSWORD:-}"
+      STEP_CA_PASSWORD_FILE: /step-secrets/step_ca_password
+      STEP_CA_X509_DEFAULT_DUR: "${STEP_CA_X509_DEFAULT_DUR:-8760h}"
+      STEP_CA_X509_MAX_DUR: "${STEP_CA_X509_MAX_DUR:-8760h}"
+      ROOT_CA_OUT: /certs/ca/root_ca.crt
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/ca/step-ca-entrypoint.sh:/usr/local/bin/envector-step-ca-entrypoint.sh:ro
+      - envector-ca-data:/home/step
+      - envector-ca-secrets:/step-secrets
+      - envector-ca-certs:/certs/ca   ## If you want to use the cert volume, comment this out and enable the line below.
+      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca
+    depends_on:
+      step-ca-volume-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "step ca health --ca-url https://localhost:9000 --root /certs/ca/root_ca.crt >/dev/null 2>&1"]
+      interval: 60s
+      timeout: 3s
+      retries: 20
+    restart: always
+
+volumes:
+  envector-ca-data:
+  envector-ca-secrets:
+  envector-ca-certs:    ## If you want to use the cert volume, comment this out.

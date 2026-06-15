@@ -4,6 +4,7 @@ kind: Ingress
 metadata:
   name: {{ include "envector-chart.fullname" . }}
   labels:
+    app: {{ include "envector-chart.fullname" . }}
     {{- include "envector-chart.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:

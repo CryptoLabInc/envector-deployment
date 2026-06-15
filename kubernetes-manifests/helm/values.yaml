@@ -84,6 +84,7 @@ endpoint:
     principalClaim: "principal_id"
     jwksUrl: ""
     capabilityPolicyJson: ""
+    jwtLeewaySeconds: 0 # JWT validation clock-skew tolerance in seconds (0 = strict)
   admin:
     enabled: true
   logLevel: INFO
@@ -231,7 +232,9 @@ compute:
   replicas: 1
   terminationGracePeriodSeconds: 120
   election:
-    backend: k8s-lease
+    # "" (default): all replicas register and serve (N active).
+    # "k8s-lease": leader-only registration (1 active, N-1 standby).
+    backend: ""
     leaseName: envector-compute
     leaseDurationSeconds: 6
     renewDeadlineSeconds: 4
@@ -368,6 +371,7 @@ audit:
     jwksUrl: ""
     expectedIssuer: ""
     allowedAudiences: ""
+    jwtLeewaySeconds: 0 # JWT validation clock-skew tolerance in seconds (0 = strict)
   # Kafka / message queue settings
   kafka:
     topic: "envector.audit.events.v1"
@@ -618,3 +622,28 @@ existingSecrets:
   # Defaults to "<release>-<chart>-storage-secret" when empty
   # If empty and externalSecrets.storageSecret.enabled=false, creates default Secret
   storageSecret: ""
+
+# --- Marketplace apptest tester ---
+# Used by the Marketplace verify "apptest" Pod (deployment/marketplace/gcp/
+# apptest/tester.yaml). Customer-facing helm installs leave .Values.testerImage
+# unset so the Pod is not rendered.
+apptest:
+  image:
+    repository: python
+    tag: "3.13-slim"
+  evalMode: mm
+  dim: 1024
+  numVectors: 50000
+  topK: 10
+  indexType: flat
+  keyId: apptest-k
+  indexName: apptest-idx
+  # insert-timeout-s arg (seconds) — matches public SDK e2e.py's flag name.
+  insertTimeoutS: 600
+  # Pin pyenvector + numpy so a PyPI release does not silently break verify.
+  # Bump alongside chart releases.
+  pyenvectorVersion: "1.4.4"
+  numpyVersion: "2.1.3"
+  # Pinned to a fixed SHA on the public SDK repo so a force-push to main does
+  # not silently change verify behaviour. Bump together with pyenvectorVersion.
+  e2eUrl: "https://raw.githubusercontent.com/CryptoLabInc/envector-python-sdk/34ba339530e7a660e12c6d2fb50e1f1b6f029a65/example/client_and_server/e2e/e2e.py"

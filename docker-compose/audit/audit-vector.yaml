@@ -1,0 +1,35 @@
+data_dir: /vector-data-dir
+
+sources:
+  audit_logs:
+    type: file
+    include:
+      - /var/log/envector/audit/*.jsonl
+    read_from: beginning
+    ignore_checkpoints: ${ENVECTOR_AUDIT_IGNORE_CHECKPOINTS:-false}
+
+transforms:
+  parse_audit_json:
+    type: remap
+    inputs:
+      - audit_logs
+    source: |
+      parsed, err = parse_json(.message)
+      if err == null {
+        . = parsed
+      } else {
+        .raw_message = .message
+        .parse_error = to_string(err)
+      }
+      .collector = "vector"
+      .pipeline = "envector-audit"
+
+sinks:
+  kafka:
+    type: kafka
+    inputs:
+      - parse_audit_json
+    bootstrap_servers: ${ENVECTOR_AUDIT_KAFKA_BOOTSTRAP_SERVERS}
+    topic: ${ENVECTOR_AUDIT_KAFKA_TOPIC}
+    encoding:
+      codec: json

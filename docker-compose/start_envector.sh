@@ -14,6 +14,15 @@ Usage: ./start_envector.sh [options]
 
 Options:
   --gpu                  Include docker-compose.gpu.yml
+  --ca                   Include the shared local CA overlay (step-ca)
+  --keycloak             Include the local Keycloak (OIDC) overlay
+  --kms                  Include the KMS overlay with TLS (implies --ca)
+  --kms-notls            Include the KMS overlay without TLS (development only)
+  --kms-audit            Include the KMS audit pipeline (implies --kms, --ca)
+  --audit                Include the audit overlay (implies --keycloak)
+  --external-network     Include docker-compose.network.yml (pins default network
+                         to external `ev_network`; create it first with
+                         `docker network create ev_network`)
   --env-file FILE        Env file path (default: pwd/.env or override)
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
@@ -29,6 +38,8 @@ Options:
 Examples (run from this directory):
   ./start_envector.sh --gpu --set ENVECTOR_ENDPOINT_HOST_PORT=50055 --set VERSION_TAG=dev
   ./start_envector.sh --num-compute 4
+  ./start_envector.sh --kms
+  ./start_envector.sh --audit
   ./start_envector.sh --down
   ./start_envector.sh --config
 USAGE
@@ -63,6 +74,7 @@ if [[ -n "$ENV_EXAMPLE_SOURCE" && "$ENV_EXAMPLE_SOURCE" != /* ]]; then
 fi
 
 GPU=false
+EXTERNAL_NETWORK=false
 PROJECT=""
 DOWN=false
 DRY_RUN=false
@@ -72,6 +84,14 @@ ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
 USE_ENV_FILE=true
+
+# Optional service overlays.
+CA=false
+KEYCLOAK=false
+KMS=false
+KMS_NOTLS=false
+AUDIT=false
+KMS_AUDIT=false
 
 has_inline_version=false
 chosen_version=""
@@ -206,6 +226,20 @@ while (($#)); do
   case "$1" in
     --gpu)
       GPU=true; shift ;;
+    --ca)
+      CA=true; shift ;;
+    --keycloak)
+      KEYCLOAK=true; shift ;;
+    --kms)
+      KMS=true; shift ;;
+    --kms-notls)
+      KMS_NOTLS=true; shift ;;
+    --kms-audit)
+      KMS_AUDIT=true; shift ;;
+    --audit)
+      AUDIT=true; shift ;;
+    --external-network)
+      EXTERNAL_NETWORK=true; shift ;;
     --env-file)
       [[ $# -ge 2 ]] || { echo "--env-file requires a value" >&2; exit 1; }
       ENV_FILE="$2"; shift 2 ;;
@@ -251,6 +285,18 @@ done
 
 if [[ ! -d "$COMPOSE_DIR" ]]; then
   echo "Compose directory not found: $COMPOSE_DIR" >&2
+  exit 1
+fi
+
+# Resolve overlay dependencies. The KMS audit pipeline layers on top of the KMS
+# services; the KMS TLS overlay needs the shared CA for its Vault/KMS
+# certificates; and the audit service authorizes export principals against
+# Keycloak. Enabling the dependents implies their prerequisites.
+if "$KMS_AUDIT"; then KMS=true; fi
+if "$KMS"; then CA=true; fi
+if "$AUDIT"; then KEYCLOAK=true; fi
+if "$KMS" && "$KMS_NOTLS"; then
+  echo "Use either --kms (TLS) or --kms-notls, not both." >&2
   exit 1
 fi
 
@@ -324,11 +370,55 @@ fi
 
 compose_args+=( -f "${COMPOSE_DIR}/docker-compose.infra.yml" )
 
+# --- Optional service overlays (CA, Keycloak, KMS, audit) ---
+# On teardown, pull in every optional overlay so a bare `--down` removes the
+# full stack. Missing files are skipped (see add_overlay below), so this stays
+# safe for partial checkouts. The KMS/audit overlays reference the CA and
+# Keycloak volumes/services, so their prerequisites are included alongside them.
+if "$DOWN"; then
+  CA=true
+  KEYCLOAK=true
+  KMS=true
+  AUDIT=true
+  KMS_AUDIT=true
+fi
+
+overlay_required=true
+if "$DOWN"; then
+  overlay_required=false
+fi
+
+add_overlay() {
+  local file_path="${COMPOSE_DIR}/$1"
+  if [[ ! -f "$file_path" ]]; then
+    if "$overlay_required"; then
+      echo "Missing compose file: $file_path" >&2
+      exit 1
+    fi
+    return
+  fi
+  compose_args+=( -f "$file_path" )
+}
+
+if "$CA"; then add_overlay "docker-compose.ca.yml"; fi
+if "$KEYCLOAK"; then add_overlay "docker-compose.keycloak.yml"; fi
+if "$KMS"; then add_overlay "docker-compose.kms.yml"; fi
+if "$KMS_NOTLS"; then add_overlay "docker-compose.kms-notls.yml"; fi
+if "$AUDIT"; then add_overlay "docker-compose.audit.yml"; fi
+if "$KMS_AUDIT"; then add_overlay "docker-compose.kms-audit.yml"; fi
+
 if [[ -n "$EXTRA_COMPOSE_FILES" ]]; then
   while IFS= read -r extra_file; do
     [[ -z "$extra_file" ]] && continue
     compose_args+=( -f "$extra_file" )
   done <<< "$EXTRA_COMPOSE_FILES"
+fi
+
+# Keep the external-network overlay last so its `default` definition is the
+# final authority over any `networks:` block in the overlays above (including
+# anything injected via EXTRA_COMPOSE_FILES).
+if "$EXTERNAL_NETWORK"; then
+  compose_args+=( -f "${COMPOSE_DIR}/docker-compose.network.yml" )
 fi
 
 pushd "$COMPOSE_DIR" >/dev/null

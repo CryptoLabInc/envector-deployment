@@ -1,8 +1,11 @@
-{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
+{{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.computeName" . }}
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
@@ -168,7 +171,9 @@ spec:
             - name: ENVECTOR_COMPUTE_KUBE_SERVICE
               value: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.computeName" . }}{{ default "-headless" .Values.compute.service.headlessSuffix }}
             - name: ENVECTOR_COMPUTE_HA_BACKEND
-              value: {{ .Values.compute.election.backend | default "k8s-lease" | quote }}
+              # Default "" = N active (every replica self-registers). k8s-lease
+              # (1 active / N-1 standby) is opt-in and needs replicas >= 2.
+              value: {{ if $computeLeaderOnlyHA }}{{ .Values.compute.election.backend | default "" | quote }}{{ else }}""{{ end }}
             - name: ENVECTOR_COMPUTE_LEASE_NAME
               value: {{ .Values.compute.election.leaseName | default "envector-compute" | quote }}
             - name: ENVECTOR_COMPUTE_LEASE_DURATION_SECONDS

@@ -2,7 +2,7 @@
 services:
   metadatadb:
     image: postgres:14.9
-    restart: always
+    restart: on-failure:10
     command: ["postgres", "-c", "max_wal_size=8GB", "-c", "checkpoint_timeout=10min", "-c", "max_connections=1000"]
     # volumes:
     #   - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata:/var/lib/postgresql/data
@@ -16,10 +16,12 @@ services:
 
   storage:
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    restart: always
+    restart: on-failure:10
     environment:
       MINIO_ROOT_USER: ${ENVECTOR_STORAGE_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${ENVECTOR_STORAGE_PASSWORD:-.}
+      # Cap Go runtime parallelism; MinIO's Go build is not cgroup-aware.
+      GOMAXPROCS: "${ENVECTOR_STORAGE_GOMAXPROCS:-16}"
     command: server /data --address ":${ENVECTOR_STORAGE_PORT:-59000}" --console-address ":${ENVECTOR_STORAGE_CONSOLE_PORT:-59001}"
     # volumes:
     #   - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/minio/data:/data
@@ -31,6 +33,10 @@ services:
       interval: 2s
       timeout: 5s
       retries: 5
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '16.0'
 
   envector-backend:
     depends_on:

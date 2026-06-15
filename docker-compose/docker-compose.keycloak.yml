@@ -1,0 +1,34 @@
+# docker-compose.keycloak.yml
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.4
+    pull_policy: "${PULL_POLICY:-always}"
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "${KEYCLOAK_HOST_PORT:-8082}:${KEYCLOAK_PORT:-8080}"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:-kcadmin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:-kcadmin}"
+      KC_HOSTNAME: "http://localhost:${KEYCLOAK_HOST_PORT:-8082}"
+    volumes:
+      # Uncomment to persist local Keycloak state, including users created via the UI or Admin API.
+      # - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/keycloak/data:/opt/keycloak/data
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/keycloak/import:/opt/keycloak/data/import:ro
+    restart: on-failure:10
+
+  envector-endpoint:
+    ports:
+      - ${ENVECTOR_HTTP_HEALTH_HOST_PORT:-18080}:${ENVECTOR_HTTP_HEALTH_PORT:-8080}
+    environment:
+      ENVECTOR_AUTH_OIDC_ISSUER: "http://localhost:${KEYCLOAK_HOST_PORT:-8082}/realms/envector"   # in mac os, replace 127.0.0.1 to localhost in your .env
+      ENVECTOR_AUTH_ALLOWED_AUDIENCES: "${KEYCLOAK_TEST_ALLOWED_AUDIENCES:-envector-cli,envector-api}"
+      ENVECTOR_AUTH_ROLE_CLAIM: "${KEYCLOAK_TEST_ROLE_CLAIM:-envector_roles}"
+      ENVECTOR_AUTH_PRINCIPAL_CLAIM: "${KEYCLOAK_TEST_PRINCIPAL_CLAIM:-principal_id}"
+      ENVECTOR_AUTH_JWKS_URL: "${KEYCLOAK_TEST_JWKS_URL:-http://keycloak:8080/realms/envector/protocol/openid-connect/certs}"
+      ENVECTOR_AUTH_CAPABILITY_POLICY_JSON: "${KEYCLOAK_TEST_AUTH_CAPABILITY_POLICY_JSON:-}"
+      ENVECTOR_DB_URL: "postgresql://${ENVECTOR_DB_USER:-postgres}:${ENVECTOR_DB_PASSWORD:-.}@metadatadb:${ENVECTOR_DB_PORT:-5432}/${ENVECTOR_DB_NAME:-mydatabase}?sslmode=${ENVECTOR_DB_SSL:-disable}"
+      ENVECTOR_DB_SCHEMA: "${ENVECTOR_DB_SCHEMA:-public}"
+      ENVECTOR_ORCHESTRATOR_DB_URL: "postgresql://${ENVECTOR_DB_USER:-postgres}:${ENVECTOR_DB_PASSWORD:-.}@metadatadb:${ENVECTOR_DB_PORT:-5432}/${ENVECTOR_DB_NAME:-mydatabase}?sslmode=${ENVECTOR_DB_SSL:-disable}"
+
+networks:
+  default:

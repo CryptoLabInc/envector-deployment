@@ -7,158 +7,221 @@
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![OS](https://img.shields.io/badge/os-linux%20%7C%20macOS%2011.0+-green.svg)](https://www.apple.com/macos/)
 
-> **enVector** provides secure vector search using **ES2 (Encrypted Similarity Search)** based on Fully Homomorphic Encryption (FHE). This repository contains self-hosted deployment assets and Python SDK notebooks.
+> **enVector** is a product that provides secure vector search functionality using **ES2 (Encrypted Similarity Search)**, which is based on Fully Homomorphic Encryption (FHE). This repository contains self-hosted deployment scripts and client SDK examples.
 
-## Features
+## 🚀 Features
 
-- End-to-end encrypted vector search
-- Docker Compose and Kubernetes (Helm) deployment support
-- Multi-service architecture for scaling and HA
-- Python SDK notebooks for quick start and API flow
+- **🔐 End-to-End Encryption**: Secure vector search with FHE (Fully Homomorphic Encryption)
+- **⚡ High Performance**: Optimized vector similarity search algorithms
+- **🏗️ Microservices Architecture**: Scalable and maintainable service design
+- **🐳 Multi-Platform Deployment**: Docker Compose and Kubernetes (Helm) support
+- **📱 Python SDK**: Easy-to-use client library for integration
 
-## Architecture
 
-enVector consists of five main services:
+## 🔒 Security Features
 
-- **envector-endpoint**: API gateway and client entrypoint
-- **envector-backend**: metadata/service management
-- **envector-orchestrator**: request coordination and scheduling
-- **envector-compute**: encrypted vector compute workers
-- **envector-shaper**: shard split/merge and storage shaping tasks
+- **Fully Homomorphic Encryption**: Secure computation on encrypted data
+- **Client-side Key Management**: Secret key never leave the client
+- **Encrypted Vector Storage**: All vector data is encrypted at rest (at-rest)
+- **Secure Search**: Search operations performed on encrypted data  (in-use)
 
-Infrastructure dependencies:
+## 📊 Performance
 
-- PostgreSQL (metadata)
-- Object storage (S3-compatible or GCS via Helm values)
+- **Vector Dimensions**: Support for 32-4096 dimensional vectors
+- **Search Speed**: Optimized encrtyped similarity search algorithms
+- **Scalability**: Horizontal scaling with Kubernetes
+- **GPU Support**: Optional GPU acceleration for encrypted vector search
 
-## Project Structure
+## 🛠️ Development
 
-```text
+### Prerequisites
+
+- Python 3.9-3.13
+- Docker and Docker Compose
+- Kubernetes cluster (for K8s deployment)
+- Helm 3.0+
+- Linux or macOS 11.0+
+
+## 🏗️ Architecture
+
+enVector consists of four main microservices:
+
+- **Endpoint**: Main API gateway and client interface
+- **Backend**: Service orchestration and metadata management
+- **Orchestrator**: Manages and schedules compute requests
+- **Compute**: Executes vector search and similarity computations
+
+### Infrastructure Dependencies
+
+- **PostgreSQL**: Metadata storage and management
+- **MinIO**: Vector data storage (S3-compatible)
+
+## 📁 Project Structure
+
+```
 envector-deployment/
-├── docker-compose/
-│   ├── docker-compose.envector.yml
-│   ├── docker-compose.infra.yml
-│   ├── docker-compose.gpu.yml
-│   ├── start_envector.sh
-│   └── README.md
-├── kubernetes-manifests/
-│   ├── helm/
-│   │   ├── Chart.yaml
-│   │   ├── values.yaml
-│   │   └── templates/
-│   └── README.md
-└── notebooks/
-    ├── 00-quick-start.ipynb
-    ├── 01-api-flow.ipynb
-    ├── 02-simple-rag.ipynb
-    ├── 03-rag-with-langchain.ipynb
-    ├── 04-ann-api-flow.ipynb
-    └── 05-insert-load-capacity.ipynb
+├── docker-compose/                  # Docker Compose deployment
+│   ├── docker-compose.envector.yml  # Core application services
+│   ├── docker-compose.infra.yml     # Postgres + MinIO (adds readiness deps to core)
+│   ├── docker-compose.gpu.yml       # GPU override for compute
+│   ├── .env.example                 # environment variables for envector
+│   ├── start_envector.sh            # easy-to-use helper script
+│   └── README.md                    # Docker setup guide
+├── kubernetes-manifests/            # Kubernetes deployment
+│   ├── helm/                        # Helm chart for K8s
+│   │   ├── Chart.yaml               # Chart metadata
+│   │   ├── values.yaml              # Configurable values
+│   │   └── templates/               # K8s manifest templates
+│   └── README.md                    # K8s deployment guide
+└── notebooks/                       # Python SDK examples
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
-**Important**: Docker images are in private repositories. Contact [heaan](mailto:hello@heaan.com) for access.
+**⚠️ Important**: Docker images are stored in private repositories. Please contact [heaan](hello@heaan.com) for access credentials before proceeding with deployment.
 
 ### Option 1: Docker Compose
 
-See full guide: [docker-compose/README.md](docker-compose/README.md)
+Recommended for Development. See more details in [docker-compose README](docker-compose/README.md).
 
+#### Method A: Clone Repository
 ```bash
+# Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
 cd envector-deployment/docker-compose
 
-# optional (script auto-creates from .env.example if missing)
+# Copy environment file (optional)
+# If .env is missing, ./start_envector.sh will be created from .env.example automatically
 cp .env.example .env
 
-# preflight + up (docker, image access, license token)
+# Start services (performs preflight: Docker, PAT login if needed, license token)
 ./start_envector.sh
+# OR docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml -p envector up -d
 ```
 
-Useful variants:
-
+#### Method B: Direct HTTP Usage
 ```bash
-# print merged compose config only
-./start_envector.sh --config
+# Download and run directly from GitHub
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.envector.yml
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/docker-compose.infra.yml
+curl -O https://raw.githubusercontent.com/cryptolabinc/envector-deployment/main/docker-compose/.env.example
 
-# GPU override
-./start_envector.sh --gpu
+# Copy environment file
+cp .env.example .env
 
-# scale compute/orchestrator
-./start_envector.sh --num-compute 4 --num-orchestrator 2
-
-# stop stack
-./start_envector.sh --down
+# Start services
+docker compose -f docker-compose.envector.yml -f docker-compose.infra.yml -p envector up -d
 ```
 
-### Option 2: Kubernetes (Helm)
 
-See full guide: [kubernetes-manifests/README.md](kubernetes-manifests/README.md)
+### Option 2: Kubernetes
 
+Recommended for production.
+
+#### Clone Repository
 ```bash
+# Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
-cd envector-deployment/kubernetes-manifests
+cd envector-deployment
 
-# install chart
-helm install envector ./helm
+# Install Helm chart
+helm install envector ./kubernetes-manifests/helm
+
+# Check deployment status
+kubectl get pods
+
+# Access services
+kubectl get svc
 ```
 
-For production, configure before install/upgrade:
+## 🔧 Configuration
 
-- `externalServices.metadatadb` / `externalServices.storage`
-- `compute.license` (token secret creation or `existingSecret`)
-- `externalSecrets.*` if using External Secrets Operator
-
-## Configuration
-
-### Key Docker Compose Environment Variables
+### Environment Variables
 
 | Variable | Description | Default |
-|---|---|---|
-| `ENVECTOR_ENDPOINT_HOST_PORT` | Host port for gRPC endpoint | `50050` |
-| `ENVECTOR_HTTP_HEALTH_HOST_PORT` | Host port for HTTP health/admin | `18080` |
-| `ENVECTOR_ADMIN_API_ENABLED` | Enable admin API on endpoint | `true` |
-| `ENVECTOR_LOG_LEVEL` | Service log level | `INFO` |
-| `ENVECTOR_COMPUTE_TAG` | Compute image tag | `latest` |
-| `ENVECTOR_LICENSE_TOKEN` | In-container license token path | `/envector/license/token.jwt` |
-| `ENVECTOR_DB_*` | PostgreSQL connection parts | varies |
-| `ENVECTOR_STORAGE_*` | Storage connection settings | varies |
+|----------|-------------|---------|
+| `ENVECTOR_ENDPOINT_TAG` | endpoint service image tag | `latest` |
+| `ENVECTOR_BACKEND_TAG` | backend service image tag | `latest` |
+| `ENVECTOR_ORCHESTRATOR_TAG` | orchestrator service image tag | `latest` |
+| `ENVECTOR_COMPUTE_TAG` | compute service image tag | `latest` |
+| `ENVECTOR_LOG_LEVEL` | Logging level | `INFO` |
+| `ENVECTOR_ENDPOINT_HOST_PORT` | endpoint external port | `50050` |
 
-### Key Helm Values
+### Helm Values
 
-`kubernetes-manifests/helm/values.yaml` 주요 항목:
+Edit `kubernetes-manifests/helm/values.yaml` to customize:
+- Service ports and types
+- Resource limits and replicas
+- External database connections
+- Image repositories and tags
 
-- `endpoint.*`, `backend.*`, `orchestrator.*`, `compute.*`, `shaper.*`
-- `externalServices.metadatadb.*`, `externalServices.storage.*`
-- `compute.license.*` (createSecret/existingSecret/mountAsFile/injectAsEnv)
-- `externalSecrets.*` (ESO 기반 시크릿 주입)
-- `ingress.*` (TLS/HTTPS)
 
-## Python SDK / Notebooks
+## 📚 Python SDK Usage
+* Python Version: 3.9-3.13
+* OS: Linux/macOS 11.0+
 
 ```bash
 pip install pyenvector
 ```
 
-Basic init example:
+### Basic Setup
 
 ```python
 import pyenvector as ev
 
+# Initialize connection
 ev.init(
-    address="localhost:50050",
+    host="localhost",
+    port=50050,
     key_path="./keys",
-    key_id="my_key",
+    key_id="my_key"
 )
+
+# Create index
+index = ev.create_index("my_index", dim=512)
+
+# Insert vectors
+vectors = [
+    [0.001 * i for i in range(512)],
+    [0.001 * i + 0.001 for i in range(512)],
+]
+index.insert(vectors, metadata=["doc1", "doc2"])
+
+# Search
+results = index.search(vectors[0], top_k=5)
 ```
 
-Notebook examples are in `notebooks/`.
+### Key Management
 
-## License
+```python
+from pyenvector.crypto import KeyGenerator, Cipher
 
-This project is proprietary software. For licensing information, contact [heaan](mailto:hello@heaan.com).
+# Generate FHE keys
+keygen = KeyGenerator("./keys/my_key")
+keygen.generate_keys()
 
-## Support
+# Create cipher for encryption/decryption
+cipher = Cipher(dim=512, enc_key_path="./keys/my_key/EncKey.bin")
+```
 
-- Product Information: [heaan](https://heaan.com)
-- Technical Support: [es2.support@heaan.com](mailto:es2.support@heaan.com)
+
+## 📄 License
+
+This project is proprietary software. For licensing information, please contact [heaan](mailto:hello@heaan.com).
+
+## 🤝 Contributing
+
+This is a proprietary software project. For contribution inquiries, please contact [heaan](mailto:hello@heaan.com).
+
+## 📞 Support
+
+- **Product Information**: [enVector at heaan](https://heaan.com)
+- **Technical Support**: Please contact [heaan](mailto:es2.support@heaan.com)
+
+## 🔗 Related Links
+
+- [enVector Product Page](https://heaan.com)
+- [heaan](https://heaan.com)
+- [FHE Resources](https://fhe.org)
+
+---

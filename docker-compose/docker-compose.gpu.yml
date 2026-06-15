@@ -2,7 +2,7 @@
 services:
   envector-compute: &ENVECTOR_COMPUTE_gpu_base
     image: "${ENVECTOR_COMPUTE_IMAGE_NAME:-envector-compute}:${ENVECTOR_COMPUTE_TAG:-latest}-gpu"
-    pull_policy: "${PULL_POLICY_CORE:-if_not_present}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
     init: true
     command: []
     environment: &ENVECTOR_COMPUTE_gpu_env
