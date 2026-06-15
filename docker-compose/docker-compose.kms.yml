@@ -175,11 +175,6 @@ services:
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
       ENVECTOR_KMS_DECRYPT_TOPK_JOBS: "${ENVECTOR_KMS_DECRYPT_TOPK_JOBS:-1}"
-      # Bounds the decrypt worker cap above: ENVECTOR_KMS_DECRYPT_TOPK_JOBS is
-      # clamped to GOMAXPROCS so workers can't oversubscribe and crash EVI's
-      # parallel decrypt. Set to the CPUs allocated to this container (e.g. when
-      # adding a deploy cpus/cpuset limit); empty = host CPU count.
-      GOMAXPROCS: "${ENVECTOR_KMS_TEE_GOMAXPROCS:-}"
       ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-https://kms-vault:8200}"
       ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
       ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
