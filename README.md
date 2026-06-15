@@ -284,8 +284,9 @@ End-to-end examples are available in [`notebooks/`](notebooks/):
 - `02-simple-rag.ipynb` / `03-rag-with-langchain.ipynb` — RAG examples
 - `04-ann-api-flow.ipynb` — approximate nearest neighbor (ANN) flow
 - `05-insert-load-capacity.ipynb` — insert/load capacity sizing
-- `06-kms-key-lifecycle.ipynb` — managed key lifecycle with the enVector KMS
-- `07-api-flow-with-kms.ipynb` — end-to-end API flow using the KMS
+- `06-gcp-vertex-ai-rag.ipynb` — RAG using GCP Vertex AI embeddings
+- `07-kms-key-lifecycle.ipynb` — managed key lifecycle with the enVector KMS
+- `08-api-flow-with-kms.ipynb` — end-to-end API flow using the KMS
 
 
 ## 📄 License
