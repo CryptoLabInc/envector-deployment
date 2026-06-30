@@ -18,6 +18,8 @@ Options:
   --keycloak             Include the local Keycloak (OIDC) overlay
   --kms                  Include the KMS overlay with TLS (implies --ca)
   --kms-notls            Include the KMS overlay without TLS (development only)
+  --kms-bao              Include the KMS overlay with OpenBao + TLS (implies --ca)
+  --kms-bao-notls        Include the KMS overlay with OpenBao without TLS
   --kms-audit            Include the KMS audit pipeline (implies --kms, --ca)
   --audit                Include the audit overlay (implies --keycloak)
   --external-network     Include docker-compose.network.yml (pins default network
@@ -41,6 +43,7 @@ Examples (run from this directory):
   ./start_envector.sh --num-compute 4
   ./start_envector.sh --num-shaper 3
   ./start_envector.sh --kms
+  ./start_envector.sh --kms-bao
   ./start_envector.sh --audit
   ./start_envector.sh --down
   ./start_envector.sh --config
@@ -93,6 +96,8 @@ CA=false
 KEYCLOAK=false
 KMS=false
 KMS_NOTLS=false
+KMS_BAO=false
+KMS_BAO_NOTLS=false
 AUDIT=false
 KMS_AUDIT=false
 
@@ -118,6 +123,15 @@ ensure_override() {
   fi
   # Respect explicitly exported env vars in the parent shell.
   if [[ -n "${!key:-}" ]]; then
+    return 0
+  fi
+  ENV_OVERRIDES+=("${key}=${value}")
+}
+
+ensure_cli_override() {
+  local key="$1"
+  local value="$2"
+  if has_override_key "$key"; then
     return 0
   fi
   ENV_OVERRIDES+=("${key}=${value}")
@@ -237,6 +251,10 @@ while (($#)); do
       KMS=true; shift ;;
     --kms-notls)
       KMS_NOTLS=true; shift ;;
+    --kms-bao)
+      KMS_BAO=true; shift ;;
+    --kms-bao-notls)
+      KMS_BAO_NOTLS=true; shift ;;
     --kms-audit)
       # KMS audit overlays the KMS service; enabling it implies --kms (which in
       # turn implies --ca below), so the fragment has a base service with an image.
@@ -303,12 +321,34 @@ fi
 # services; the KMS TLS overlay needs the shared CA for its Vault/KMS
 # certificates; and the audit service authorizes export principals against
 # Keycloak. Enabling the dependents implies their prerequisites.
-if "$KMS_AUDIT"; then KMS=true; fi
-if "$KMS"; then CA=true; fi
+if "$KMS_AUDIT" && ! "$KMS" && ! "$KMS_NOTLS" && ! "$KMS_BAO" && ! "$KMS_BAO_NOTLS"; then KMS=true; fi
+if "$KMS" || "$KMS_BAO"; then CA=true; fi
 if "$AUDIT"; then KEYCLOAK=true; fi
-if "$KMS" && "$KMS_NOTLS"; then
-  echo "Use either --kms (TLS) or --kms-notls, not both." >&2
+
+kms_overlay_count=0
+if "$KMS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_NOTLS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_BAO"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_BAO_NOTLS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if ((kms_overlay_count > 1)); then
+  echo "Select at most one KMS overlay: --kms, --kms-notls, --kms-bao, or --kms-bao-notls." >&2
   exit 1
+fi
+
+if "$KMS_BAO"; then
+  ensure_cli_override "ENVECTOR_KMS_SECRET_BACKEND" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SM_IMAGE" "openbao/openbao:2.5.5"
+  ensure_cli_override "ENVECTOR_KMS_SM_BIN" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SECRET_MANAGER_ADDR" "https://kms-secret-manager:8200"
+  ensure_cli_override "SM_TLS_CN" "kms-secret-manager"
+  ensure_cli_override "SM_TLS_DNS" "kms-secret-manager,localhost"
+  ensure_cli_override "SM_TLS_IP" "127.0.0.1"
+fi
+if "$KMS_BAO_NOTLS"; then
+  ensure_cli_override "ENVECTOR_KMS_SECRET_BACKEND" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SM_IMAGE" "openbao/openbao:2.5.5"
+  ensure_cli_override "ENVECTOR_KMS_SM_BIN" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SECRET_MANAGER_ADDR" "http://kms-secret-manager:8200"
 fi
 
 if [[ -n "${ENV_FILE:-}" && "${ENV_FILE}" != /* ]]; then
@@ -415,6 +455,8 @@ if "$CA"; then add_overlay "docker-compose.ca.yml"; fi
 if "$KEYCLOAK"; then add_overlay "docker-compose.keycloak.yml"; fi
 if "$KMS"; then add_overlay "docker-compose.kms.yml"; fi
 if "$KMS_NOTLS"; then add_overlay "docker-compose.kms-notls.yml"; fi
+if "$KMS_BAO"; then add_overlay "docker-compose.kms.yml"; fi
+if "$KMS_BAO_NOTLS"; then add_overlay "docker-compose.kms-notls.yml"; fi
 if "$AUDIT"; then add_overlay "docker-compose.audit.yml"; fi
 if "$KMS_AUDIT"; then add_overlay "docker-compose.kms-audit.yml"; fi
 
