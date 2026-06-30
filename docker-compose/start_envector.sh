@@ -27,6 +27,7 @@ Options:
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
   --num-compute N        Number of compute workers (CPU: scales envector-compute, GPU: enables up to N GPUs)
+  --num-shaper N         Number of shaper workers (scales envector-shaper)
   --num-orchestrator N   Number of orchestrator workers (scales envector-orchestrator)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
@@ -38,6 +39,7 @@ Options:
 Examples (run from this directory):
   ./start_envector.sh --gpu --set ENVECTOR_ENDPOINT_HOST_PORT=50055 --set VERSION_TAG=dev
   ./start_envector.sh --num-compute 4
+  ./start_envector.sh --num-shaper 3
   ./start_envector.sh --kms
   ./start_envector.sh --audit
   ./start_envector.sh --down
@@ -79,6 +81,7 @@ PROJECT=""
 DOWN=false
 DRY_RUN=false
 NUM_COMPUTE=1
+NUM_SHAPER=1
 NUM_ORCHESTRATOR=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
@@ -235,7 +238,9 @@ while (($#)); do
     --kms-notls)
       KMS_NOTLS=true; shift ;;
     --kms-audit)
-      KMS_AUDIT=true; shift ;;
+      # KMS audit overlays the KMS service; enabling it implies --kms (which in
+      # turn implies --ca below), so the fragment has a base service with an image.
+      KMS=true; KMS_AUDIT=true; shift ;;
     --audit)
       AUDIT=true; shift ;;
     --external-network)
@@ -254,6 +259,12 @@ while (($#)); do
         echo "--num-compute must be an integer" >&2; exit 1;
       fi
       NUM_COMPUTE="$2"; shift 2 ;;
+    --num-shaper|--num-es2s)
+      [[ $# -ge 2 ]] || { echo "--num-shaper requires a number" >&2; exit 1; }
+      if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+        echo "--num-shaper must be an integer" >&2; exit 1;
+      fi
+      NUM_SHAPER="$2"; shift 2 ;;
     --num-orchestrator|--num-es2o)
       [[ $# -ge 2 ]] || { echo "--num-orchestrator requires a number" >&2; exit 1; }
       if ! [[ "$2" =~ ^[0-9]+$ ]]; then
@@ -465,6 +476,9 @@ elif "$CONFIG_MODE"; then
   cmd+=( config )
 else
   cmd+=( up -d )
+  if (( NUM_SHAPER > 1 )); then
+    cmd+=( --scale "envector-shaper=${NUM_SHAPER}" )
+  fi
   if ! "$GPU" && (( NUM_COMPUTE > 1 )); then
     cmd+=( --scale "envector-compute=${NUM_COMPUTE}" )
   fi

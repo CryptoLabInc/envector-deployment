@@ -63,20 +63,31 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "envector-chart.fullname" . }}-embedded-pg
+          env:
+            # PGDATA must be a SUBDIR of the mounted PVC. The postgres image
+            # declares VOLUME /var/lib/postgresql/data, which (when the PVC is
+            # mounted at the parent) gets an ephemeral overlay at that subpath,
+            # shadowing the PVC — so data lands on the node disk and is LOST on
+            # any pod restart. Mounting the PVC AT the VOLUME path and pointing
+            # PGDATA at a subdir keeps data on the PVC (and avoids initdb
+            # tripping over the lost+found at the mount root).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: pgdata
-              # Mount the whole /var/lib/postgresql directory (no subPath) so
-              # the volume is compatible with both postgres 16
-              # (PGDATA=/var/lib/postgresql/data) and postgres 18
-              # (PGDATA=/var/lib/postgresql/18/docker).
-              mountPath: /var/lib/postgresql
+              mountPath: /var/lib/postgresql/data
           resources:
+            {{- with .Values.embeddedPostgres.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }}
             requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
+              cpu: 250m
               memory: 512Mi
+            limits:
+              cpu: "1"
+              # >50K-vector metadata peaks ~530 MB; 512Mi would OOMKill pg.
+              memory: 1Gi
+            {{- end }}
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.embeddedPostgres.user | quote }}]

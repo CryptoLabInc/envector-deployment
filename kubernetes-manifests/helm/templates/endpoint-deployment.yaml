@@ -146,6 +146,10 @@ spec:
               value: {{ .Values.endpoint.service.nodePort | default (.Values.endpoint.service.port | default 50050) | quote }}
             - name: ENVECTOR_HTTP_HEALTH_PORT
               value: {{ .Values.endpoint.health.port | default 8080 | quote }}
+            {{- if hasKey .Values.endpoint "webui" }}
+            - name: ENVECTOR_WEBUI_ENABLED
+              value: {{ .Values.endpoint.webui.enabled | default true | quote }}
+            {{- end }}
             {{- if .Values.audit.enabled }}
             - name: AUDIT_LOG_SINK
               value: "file"

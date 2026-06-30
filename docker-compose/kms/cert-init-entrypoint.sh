@@ -4,10 +4,15 @@ set -eu
 CERTS_DIR="${CERTS_DIR:-./certs}"
 CA_DIR="${CERTS_DIR}/ca"
 
-VAULT_DIR="${CERTS_DIR}/vault"
-VAULT_IP="${VAULT_TLS_IP:-127.0.0.1}"
-VAULT_DNS="${VAULT_TLS_DNS:-kms-vault,localhost}"
-VAULT_CN="${VAULT_TLS_CN:-}"
+# Backend-neutral secret-manager server cert. ONE cert serves whichever
+# Vault-protocol backend runs in the kms-secret-manager service (HashiCorp Vault
+# by default, OpenBao when the bao overlay swaps only the image). The slot path
+# and filenames are neutral (/certs/secret-manager/tls.{crt,key}); SAN/CN come
+# from SM_TLS_* so a profile can point the cert at its own hostname.
+SM_DIR="${CERTS_DIR}/secret-manager"
+SM_IP="${SM_TLS_IP:-127.0.0.1}"
+SM_DNS="${SM_TLS_DNS:-kms-secret-manager,localhost}"
+SM_CN="${SM_TLS_CN:-}"
 
 KMS_TEE_DIR="${CERTS_DIR}/kms-tee"
 KMS_TEE_IP="${KMS_TEE_TLS_IP:-}"
@@ -28,7 +33,7 @@ export STEPPATH
 
 log() { echo "[cert-init] $*"; }
 
-mkdir -p "${CA_DIR}" "${VAULT_DIR}" "${KMS_TEE_DIR}" "${KMS_API_DIR}"
+mkdir -p "${CA_DIR}" "${SM_DIR}" "${KMS_TEE_DIR}" "${KMS_API_DIR}"
 
 if [ ! -s "${STEP_CA_PASSWORD_FILE}" ]; then
   log "missing step-ca provisioner password file: ${STEP_CA_PASSWORD_FILE}"
@@ -77,24 +82,26 @@ subject_from_san() {
   printf '%s' "$3"
 }
 
-VAULT_DNS="$(sanitize_csv "${VAULT_DNS}")"
-VAULT_IP="$(sanitize_csv "${VAULT_IP}")"
+SM_DNS="$(sanitize_csv "${SM_DNS}")"
+SM_IP="$(sanitize_csv "${SM_IP}")"
 KMS_TEE_DNS="$(sanitize_csv "${KMS_TEE_DNS}")"
 KMS_TEE_IP="$(sanitize_csv "${KMS_TEE_IP}")"
 KMS_API_DNS="$(sanitize_csv "${KMS_API_DNS}")"
 KMS_API_IP="$(sanitize_csv "${KMS_API_IP}")"
-VAULT_CN="${VAULT_CN:-$(subject_from_san "${VAULT_DNS}" "${VAULT_IP}" "kms-vault")}"
+SM_CN="${SM_CN:-$(subject_from_san "${SM_DNS}" "${SM_IP}" "kms-secret-manager")}"
 KMS_TEE_CN="${KMS_TEE_CN:-$(subject_from_san "${KMS_TEE_DNS}" "${KMS_TEE_IP}" "envector-kms-tee")}"
 KMS_API_CN="${KMS_API_CN:-$(subject_from_san "${KMS_API_DNS}" "${KMS_API_IP}" "envector-kms")}"
 
+# cert_profile emits a snapshot of the requested inputs so a rerun can skip
+# regeneration when nothing changed.
 cert_profile() {
   cat <<EOF
 step_ca_url=${STEP_CA_URL}
 step_ca_provisioner=${STEP_CA_PROVISIONER}
 cert_not_after=${CERT_NOT_AFTER}
-vault_cn=${VAULT_CN}
-vault_dns=${VAULT_DNS}
-vault_ip=${VAULT_IP}
+sm_cn=${SM_CN}
+sm_dns=${SM_DNS}
+sm_ip=${SM_IP}
 kms_tee_cn=${KMS_TEE_CN}
 kms_tee_dns=${KMS_TEE_DNS}
 kms_tee_ip=${KMS_TEE_IP}
@@ -105,27 +112,27 @@ EOF
 }
 
 cert_profile_matches() {
-  cert_profile | cmp -s - "${VAULT_DIR}/cert.profile" \
+  cert_profile | cmp -s - "${SM_DIR}/cert.profile" \
     && cert_profile | cmp -s - "${KMS_TEE_DIR}/cert.profile" \
     && cert_profile | cmp -s - "${KMS_API_DIR}/cert.profile"
 }
 
 write_cert_profiles() {
-  cert_profile > "${VAULT_DIR}/cert.profile"
+  cert_profile > "${SM_DIR}/cert.profile"
   cert_profile > "${KMS_TEE_DIR}/cert.profile"
   cert_profile > "${KMS_API_DIR}/cert.profile"
-  chmod 644 "${VAULT_DIR}/cert.profile" "${KMS_TEE_DIR}/cert.profile" \
+  chmod 644 "${SM_DIR}/cert.profile" "${KMS_TEE_DIR}/cert.profile" \
     "${KMS_API_DIR}/cert.profile"
 }
 
 cert_files_present() {
-  [ -f "${VAULT_DIR}/vault.crt" ] && [ -f "${VAULT_DIR}/vault.key" ] \
+  [ -f "${SM_DIR}/tls.crt" ] && [ -f "${SM_DIR}/tls.key" ] \
     && [ -f "${KMS_TEE_DIR}/kms-tee.crt" ] && [ -f "${KMS_TEE_DIR}/kms-tee.key" ] \
     && [ -f "${KMS_API_DIR}/kms-api.crt" ] && [ -f "${KMS_API_DIR}/kms-api.key" ]
 }
 
 certs_match_current_ca() {
-  step certificate verify "${VAULT_DIR}/vault.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1 \
+  step certificate verify "${SM_DIR}/tls.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1 \
     && step certificate verify "${KMS_TEE_DIR}/kms-tee.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1 \
     && step certificate verify "${KMS_API_DIR}/kms-api.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1
 }
@@ -181,8 +188,8 @@ issue_cert() {
     ${san_args}
 }
 
-log "requesting Vault server certificate from step-ca"
-issue_cert "${VAULT_CN}" "${VAULT_DIR}/vault.crt" "${VAULT_DIR}/vault.key" "${VAULT_DNS}" "${VAULT_IP}"
+log "requesting secret-manager server certificate from step-ca"
+issue_cert "${SM_CN}" "${SM_DIR}/tls.crt" "${SM_DIR}/tls.key" "${SM_DNS}" "${SM_IP}"
 
 log "requesting KMS/TEE client certificate from step-ca"
 issue_cert "${KMS_TEE_CN}" "${KMS_TEE_DIR}/kms-tee.crt" "${KMS_TEE_DIR}/kms-tee.key" "${KMS_TEE_DNS}" "${KMS_TEE_IP}"
@@ -193,14 +200,12 @@ issue_cert "${KMS_API_CN}" "${KMS_API_DIR}/kms-api.crt" "${KMS_API_DIR}/kms-api.
 # Runtime containers may run as non-root users. The private keys are isolated by
 # per-consumer compose volumes, so make each mounted key readable in its own
 # container while still keeping server/client keys separated across services.
-chmod 644 "${VAULT_DIR}/vault.key" "${KMS_TEE_DIR}/kms-tee.key" \
-  "${KMS_API_DIR}/kms-api.key"
-chmod 644 "${VAULT_DIR}/vault.crt" "${KMS_TEE_DIR}/kms-tee.crt" \
-  "${KMS_API_DIR}/kms-api.crt"
+chmod 644 "${SM_DIR}/tls.key" "${KMS_TEE_DIR}/kms-tee.key" "${KMS_API_DIR}/kms-api.key"
+chmod 644 "${SM_DIR}/tls.crt" "${KMS_TEE_DIR}/kms-tee.crt" "${KMS_API_DIR}/kms-api.crt"
 write_cert_profiles
 
 log "certs written to ${CERTS_DIR}:"
 log "  CA:              ${CA_DIR}/root_ca.crt"
-log "  Vault:           ${VAULT_DIR}/vault.{crt,key}"
+log "  Secret manager:  ${SM_DIR}/tls.{crt,key}"
 log "  KMS TEE:         ${KMS_TEE_DIR}/kms-tee.{crt,key}"
 log "  KMS API:         ${KMS_API_DIR}/kms-api.{crt,key}"

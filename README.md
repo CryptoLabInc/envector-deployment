@@ -211,7 +211,7 @@ Optional overlays add further variables (full list and defaults in [`docker-comp
 | Variable | Description | Overlay |
 |----------|-------------|---------|
 | `ENVECTOR_KMS_SECRET_MANAGER_ADDR` | Vault address used by the KMS | KMS |
-| `ENVECTOR_KMS_REQUIRE_VAULT_TLS` | Require TLS to Vault | KMS |
+| `ENVECTOR_KMS_REQUIRE_SM_TLS` | Require TLS to the secret manager (Vault/OpenBao); legacy `ENVECTOR_KMS_REQUIRE_VAULT_TLS` still honored | KMS |
 | `ENVECTOR_AUTH_JWKS_URL` | JWKS endpoint for token validation | Keycloak |
 | `ENVECTOR_AUTH_PRINCIPAL_CLAIM` | Token claim used as the principal | Keycloak |
 | `KEYCLOAK_REALM` | Keycloak realm name | Keycloak |

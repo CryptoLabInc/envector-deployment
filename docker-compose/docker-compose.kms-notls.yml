@@ -19,18 +19,24 @@ services:
       retries: 5
     restart: always
 
-  kms-vault:
-    image: hashicorp/vault:1.20
+  # Backend-neutral secret manager (no-TLS dev profile). Image is env-selected:
+  # default HashiCorp Vault; set ENVECTOR_KMS_SM_IMAGE=openbao/openbao:2.5.5 +
+  # ENVECTOR_KMS_SM_BIN=bao for OpenBao (start_envector.sh maps these from
+  # ENVECTOR_KMS_SECRET_BACKEND).
+  kms-secret-manager:
+    # Image + server binary env-selected; default Vault, OpenBao via
+    # ENVECTOR_KMS_SM_IMAGE=openbao/openbao:2.5.5 + ENVECTOR_KMS_SM_BIN=bao.
+    image: "${ENVECTOR_KMS_SM_IMAGE:-hashicorp/vault:1.20}"
     entrypoint:
-      - vault
-    command: server -config=/vault/config/kms-vault.hcl
+      - "${ENVECTOR_KMS_SM_BIN:-vault}"
+    command: server -config=/secret-manager/config/secret-manager.hcl
     cap_add:
       - IPC_LOCK
     volumes:
-      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-vault.hcl:/vault/config/kms-vault.hcl:ro
-      - kms-vault-data:/vault/file
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-secret-manager.hcl:/secret-manager/config/secret-manager.hcl:ro
+      - kms-secret-manager-data:/secret-manager/file
     healthcheck:
-      test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200 >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
+      test: ["CMD-SHELL", "${ENVECTOR_KMS_SM_BIN:-vault} status -address=http://127.0.0.1:8200 >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -48,7 +54,7 @@ services:
       ENVECTOR_KMS_HTTP_PORT: "${ENVECTOR_KMS_HTTP_PORT:-8080}"
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_KEY_DIR: "/data/keys"
-      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip2}"
+      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip3}"
       ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
       ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
       ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
@@ -66,7 +72,7 @@ services:
     depends_on:
       kms-storage:
         condition: service_healthy
-      kms-vault:
+      kms-secret-manager:
         condition: service_healthy
       envector-kms-tee:
         condition: service_started
@@ -82,16 +88,16 @@ services:
       ENVECTOR_KMS_TEE_GRPC_PORT: "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
-      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-http://kms-vault:8200}"
+      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-http://kms-secret-manager:8200}"
       ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
       ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
       ENVECTOR_KMS_TRANSIT_MOUNT: "${ENVECTOR_KMS_TRANSIT_MOUNT:-transit}"
     depends_on:
-      kms-vault:
+      kms-secret-manager:
         condition: service_healthy
     restart: always
 
 volumes:
   kms-keys:
   kms-minio-data:
-  kms-vault-data:
+  kms-secret-manager-data:
