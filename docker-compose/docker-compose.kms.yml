@@ -57,9 +57,9 @@ services:
       STEP_CA_URL: "${STEP_CA_URL:-https://step-ca:9000}"
       STEP_CA_PROVISIONER: "${STEP_CA_PROVISIONER:-envector-workloads}"
       STEP_CA_PASSWORD_FILE: /step-secrets/step_ca_password
-      VAULT_TLS_CN: "${VAULT_TLS_CN:-kms-vault}"
-      VAULT_TLS_DNS: "${VAULT_TLS_DNS:-kms-vault,localhost}"
-      VAULT_TLS_IP: "${VAULT_TLS_IP:-127.0.0.1}"
+      SM_TLS_CN: "${SM_TLS_CN:-kms-secret-manager}"
+      SM_TLS_DNS: "${SM_TLS_DNS:-kms-secret-manager,localhost}"
+      SM_TLS_IP: "${SM_TLS_IP:-127.0.0.1}"
       KMS_TEE_TLS_CN: "${KMS_TEE_TLS_CN:-envector-kms-tee}"
       KMS_TEE_TLS_DNS: "${KMS_TEE_TLS_DNS:-envector-kms-tee}"
       KMS_API_TLS_CN: "${KMS_API_TLS_CN:-envector-kms}"
@@ -70,7 +70,7 @@ services:
       - envector-ca-secrets:/step-secrets:ro
       - envector-ca-certs:/certs/ca:ro    ## If you want to use the cert volume, comment this out and enable the line below.
       # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
-      - kms-vault-certs:/certs/vault
+      - kms-secret-manager-certs:/certs/secret-manager
       - kms-tee-certs:/certs/kms-tee
       - kms-api-certs:/certs/kms-api
     depends_on:
@@ -78,23 +78,32 @@ services:
         condition: service_healthy
     restart: "no"
 
-  kms-vault:
-    image: hashicorp/vault:1.20
+  # Backend-neutral secret manager. Default backend is HashiCorp Vault; OpenBao
+  # swaps ONLY the image/binary (ENVECTOR_KMS_SM_IMAGE/_BIN) and sets
+  # ENVECTOR_KMS_SECRET_BACKEND=bao — everything else (HCL, cert slot, storage
+  # path, healthcheck shape) is identical and shared.
+  kms-secret-manager:
+    # Backend image is env-selected: default HashiCorp Vault; set
+    # ENVECTOR_KMS_SM_IMAGE=openbao/openbao:2.5.5 + ENVECTOR_KMS_SM_BIN=bao for
+    # OpenBao. start_envector.sh maps these from ENVECTOR_KMS_SECRET_BACKEND.
+    # Image + server binary are env-selected; default HashiCorp Vault, OpenBao via
+    # ENVECTOR_KMS_SM_IMAGE=openbao/openbao:2.5.5 + ENVECTOR_KMS_SM_BIN=bao.
+    # start_envector.sh sets both when ENVECTOR_KMS_SECRET_BACKEND=bao.
+    image: "${ENVECTOR_KMS_SM_IMAGE:-hashicorp/vault:1.20}"
     entrypoint:
-      - vault
-    command: server -config=/vault/config/kms-vault.hcl
+      - "${ENVECTOR_KMS_SM_BIN:-vault}"
+    command: server -config=/secret-manager/config/secret-manager.hcl
     cap_add:
       - IPC_LOCK
     volumes:
-      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-vault-tls.hcl:/vault/config/kms-vault.hcl:ro
-      # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/kms-vault-data:/vault/file
-      # Persist Vault storage across container recreation (matches the notls profile).
-      - kms-vault-data:/vault/file
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/kms-secret-manager-tls.hcl:/secret-manager/config/secret-manager.hcl:ro
+      # Persist storage across container recreation (matches the notls profile).
+      - kms-secret-manager-data:/secret-manager/file
       - envector-ca-certs:/certs/ca:ro    ## If you want to use the cert volume, comment this out and enable the line below.
       # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
-      - kms-vault-certs:/certs/vault:ro
+      - kms-secret-manager-certs:/certs/secret-manager:ro
     healthcheck:
-      test: ["CMD-SHELL", "vault status -address=https://127.0.0.1:8201 -ca-cert=/certs/ca/root_ca.crt >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
+      test: ["CMD-SHELL", "${ENVECTOR_KMS_SM_BIN:-vault} status -address=https://127.0.0.1:8201 -ca-cert=/certs/ca/root_ca.crt >/dev/null 2>&1; code=$$?; [ $$code -eq 0 ] || [ $$code -eq 2 ]"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -120,7 +129,7 @@ services:
       ENVECTOR_KMS_HTTP_PORT: "${ENVECTOR_KMS_HTTP_PORT:-8080}"
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_KEY_DIR: "/data/keys"
-      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip2}"
+      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip3}"
       ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
       ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
       ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
@@ -145,7 +154,7 @@ services:
     depends_on:
       kms-storage:
         condition: service_healthy
-      kms-vault:
+      kms-secret-manager:
         condition: service_healthy
       # service_started (not service_healthy): envector-kms-tee starts
       # NOT_SERVING (bootstrap_required=true) until init_secretmgr.sh
@@ -175,20 +184,20 @@ services:
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
       ENVECTOR_KMS_DECRYPT_TOPK_JOBS: "${ENVECTOR_KMS_DECRYPT_TOPK_JOBS:-1}"
-      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-https://kms-vault:8200}"
+      ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-https://kms-secret-manager:8200}"
       ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
       ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
       ENVECTOR_KMS_TRANSIT_MOUNT: "${ENVECTOR_KMS_TRANSIT_MOUNT:-transit}"
-      KMS_VAULT_CACERT: /certs/ca/root_ca.crt
-      KMS_VAULT_CLIENT_CERT: /certs/kms-tee/kms-tee.crt
-      KMS_VAULT_CLIENT_KEY: /certs/kms-tee/kms-tee.key
-      ENVECTOR_KMS_REQUIRE_VAULT_TLS: "${ENVECTOR_KMS_REQUIRE_VAULT_TLS:-true}"
+      KMS_SM_CACERT: /certs/ca/root_ca.crt
+      KMS_SM_CLIENT_CERT: /certs/kms-tee/kms-tee.crt
+      KMS_SM_CLIENT_KEY: /certs/kms-tee/kms-tee.key
+      ENVECTOR_KMS_REQUIRE_SM_TLS: "${ENVECTOR_KMS_REQUIRE_SM_TLS:-true}"
     volumes:
       - envector-ca-certs:/certs/ca:ro  ## If you want to use the cert volume, comment this out and enable the line below.
       # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
       - kms-tee-certs:/certs/kms-tee:ro
     depends_on:
-      kms-vault:
+      kms-secret-manager:
         condition: service_healthy
     # Disable core dumps so secret key material can't leak into a dump file.
     ulimits:
@@ -200,8 +209,8 @@ services:
 volumes:
   kms-keys:
   kms-minio-data:
-  kms-vault-data:
-  kms-vault-certs:
+  kms-secret-manager-data:
+  kms-secret-manager-certs:
   kms-tee-certs:
   kms-api-certs:
 

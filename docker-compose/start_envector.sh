@@ -18,6 +18,8 @@ Options:
   --keycloak             Include the local Keycloak (OIDC) overlay
   --kms                  Include the KMS overlay with TLS (implies --ca)
   --kms-notls            Include the KMS overlay without TLS (development only)
+  --kms-bao              Include the KMS overlay with OpenBao + TLS (implies --ca)
+  --kms-bao-notls        Include the KMS overlay with OpenBao without TLS
   --kms-audit            Include the KMS audit pipeline (implies --kms, --ca)
   --audit                Include the audit overlay (implies --keycloak)
   --external-network     Include docker-compose.network.yml (pins default network
@@ -27,6 +29,7 @@ Options:
   --config               Print merged docker compose config and exit
   -p, --project NAME     Compose project name (optional)
   --num-compute N        Number of compute workers (CPU: scales envector-compute, GPU: enables up to N GPUs)
+  --num-shaper N         Number of shaper workers (scales envector-shaper)
   --num-orchestrator N   Number of orchestrator workers (scales envector-orchestrator)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
@@ -38,7 +41,9 @@ Options:
 Examples (run from this directory):
   ./start_envector.sh --gpu --set ENVECTOR_ENDPOINT_HOST_PORT=50055 --set VERSION_TAG=dev
   ./start_envector.sh --num-compute 4
+  ./start_envector.sh --num-shaper 3
   ./start_envector.sh --kms
+  ./start_envector.sh --kms-bao
   ./start_envector.sh --audit
   ./start_envector.sh --down
   ./start_envector.sh --config
@@ -79,6 +84,7 @@ PROJECT=""
 DOWN=false
 DRY_RUN=false
 NUM_COMPUTE=1
+NUM_SHAPER=1
 NUM_ORCHESTRATOR=1
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
@@ -90,6 +96,8 @@ CA=false
 KEYCLOAK=false
 KMS=false
 KMS_NOTLS=false
+KMS_BAO=false
+KMS_BAO_NOTLS=false
 AUDIT=false
 KMS_AUDIT=false
 
@@ -115,6 +123,15 @@ ensure_override() {
   fi
   # Respect explicitly exported env vars in the parent shell.
   if [[ -n "${!key:-}" ]]; then
+    return 0
+  fi
+  ENV_OVERRIDES+=("${key}=${value}")
+}
+
+ensure_cli_override() {
+  local key="$1"
+  local value="$2"
+  if has_override_key "$key"; then
     return 0
   fi
   ENV_OVERRIDES+=("${key}=${value}")
@@ -234,8 +251,14 @@ while (($#)); do
       KMS=true; shift ;;
     --kms-notls)
       KMS_NOTLS=true; shift ;;
+    --kms-bao)
+      KMS_BAO=true; shift ;;
+    --kms-bao-notls)
+      KMS_BAO_NOTLS=true; shift ;;
     --kms-audit)
-      KMS_AUDIT=true; shift ;;
+      # KMS audit overlays the KMS service; enabling it implies --kms (which in
+      # turn implies --ca below), so the fragment has a base service with an image.
+      KMS=true; KMS_AUDIT=true; shift ;;
     --audit)
       AUDIT=true; shift ;;
     --external-network)
@@ -254,6 +277,12 @@ while (($#)); do
         echo "--num-compute must be an integer" >&2; exit 1;
       fi
       NUM_COMPUTE="$2"; shift 2 ;;
+    --num-shaper|--num-es2s)
+      [[ $# -ge 2 ]] || { echo "--num-shaper requires a number" >&2; exit 1; }
+      if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+        echo "--num-shaper must be an integer" >&2; exit 1;
+      fi
+      NUM_SHAPER="$2"; shift 2 ;;
     --num-orchestrator|--num-es2o)
       [[ $# -ge 2 ]] || { echo "--num-orchestrator requires a number" >&2; exit 1; }
       if ! [[ "$2" =~ ^[0-9]+$ ]]; then
@@ -292,12 +321,34 @@ fi
 # services; the KMS TLS overlay needs the shared CA for its Vault/KMS
 # certificates; and the audit service authorizes export principals against
 # Keycloak. Enabling the dependents implies their prerequisites.
-if "$KMS_AUDIT"; then KMS=true; fi
-if "$KMS"; then CA=true; fi
+if "$KMS_AUDIT" && ! "$KMS" && ! "$KMS_NOTLS" && ! "$KMS_BAO" && ! "$KMS_BAO_NOTLS"; then KMS=true; fi
+if "$KMS" || "$KMS_BAO"; then CA=true; fi
 if "$AUDIT"; then KEYCLOAK=true; fi
-if "$KMS" && "$KMS_NOTLS"; then
-  echo "Use either --kms (TLS) or --kms-notls, not both." >&2
+
+kms_overlay_count=0
+if "$KMS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_NOTLS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_BAO"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if "$KMS_BAO_NOTLS"; then kms_overlay_count=$((kms_overlay_count + 1)); fi
+if ((kms_overlay_count > 1)); then
+  echo "Select at most one KMS overlay: --kms, --kms-notls, --kms-bao, or --kms-bao-notls." >&2
   exit 1
+fi
+
+if "$KMS_BAO"; then
+  ensure_cli_override "ENVECTOR_KMS_SECRET_BACKEND" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SM_IMAGE" "openbao/openbao:2.5.5"
+  ensure_cli_override "ENVECTOR_KMS_SM_BIN" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SECRET_MANAGER_ADDR" "https://kms-secret-manager:8200"
+  ensure_cli_override "SM_TLS_CN" "kms-secret-manager"
+  ensure_cli_override "SM_TLS_DNS" "kms-secret-manager,localhost"
+  ensure_cli_override "SM_TLS_IP" "127.0.0.1"
+fi
+if "$KMS_BAO_NOTLS"; then
+  ensure_cli_override "ENVECTOR_KMS_SECRET_BACKEND" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SM_IMAGE" "openbao/openbao:2.5.5"
+  ensure_cli_override "ENVECTOR_KMS_SM_BIN" "bao"
+  ensure_cli_override "ENVECTOR_KMS_SECRET_MANAGER_ADDR" "http://kms-secret-manager:8200"
 fi
 
 if [[ -n "${ENV_FILE:-}" && "${ENV_FILE}" != /* ]]; then
@@ -404,6 +455,8 @@ if "$CA"; then add_overlay "docker-compose.ca.yml"; fi
 if "$KEYCLOAK"; then add_overlay "docker-compose.keycloak.yml"; fi
 if "$KMS"; then add_overlay "docker-compose.kms.yml"; fi
 if "$KMS_NOTLS"; then add_overlay "docker-compose.kms-notls.yml"; fi
+if "$KMS_BAO"; then add_overlay "docker-compose.kms.yml"; fi
+if "$KMS_BAO_NOTLS"; then add_overlay "docker-compose.kms-notls.yml"; fi
 if "$AUDIT"; then add_overlay "docker-compose.audit.yml"; fi
 if "$KMS_AUDIT"; then add_overlay "docker-compose.kms-audit.yml"; fi
 
@@ -465,6 +518,9 @@ elif "$CONFIG_MODE"; then
   cmd+=( config )
 else
   cmd+=( up -d )
+  if (( NUM_SHAPER > 1 )); then
+    cmd+=( --scale "envector-shaper=${NUM_SHAPER}" )
+  fi
   if ! "$GPU" && (( NUM_COMPUTE > 1 )); then
     cmd+=( --scale "envector-compute=${NUM_COMPUTE}" )
   fi

@@ -65,6 +65,7 @@ services:
       ENVECTOR_BACKEND_PORT: "${ENVECTOR_BACKEND_PORT:-50051}"
       ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
       ENVECTOR_SHAPER_ADDRESS: "envector-shaper:${ENVECTOR_SHAPER_PORT:-50056}"
+      ENVECTOR_SHAPER_DNS_REFRESH_INTERVAL: "${ENVECTOR_SHAPER_DNS_REFRESH_INTERVAL:-10s}"
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       ENVECTOR_BACKEND_ELECTION_BACKEND: "${ENVECTOR_BACKEND_ELECTION_BACKEND:-single-node}"
       # DB
@@ -128,7 +129,6 @@ services:
       MALLOC_ARENA_MAX: "${MALLOC_ARENA_MAX:-2}"
       # Development settings
       NUM_SEARCH_WORKERS: "${NUM_SEARCH_WORKERS:-4}"
-      ENVECTOR_THREAD_POOL_SCALE: "${ENVECTOR_THREAD_POOL_SCALE:-4}"
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
       - ${START_ENVECTOR_COMPOSE_DIR:-.}/token.jwt:/envector/license/token.jwt

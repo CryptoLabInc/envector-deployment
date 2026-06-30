@@ -19,6 +19,10 @@
 --   These keep a 1.4.5-upgraded deployment schema-identical to a fresh post-simplification
 --   install.
 --
+-- Named partitions. PART A also adds indexes.parent_index_name and the partitions
+--   table (+ _default backfill) — the global delta initSchema builds on a fresh
+--   install. Additive + idempotent. See docs/design/partitions.md.
+--
 -- Changes:
 --   1. Rename table: <idx>_shard_map → <idx>_item_shard_map (clearer
 --      semantics — the row is "which shard does this item live in", not
@@ -113,6 +117,37 @@ CREATE INDEX IF NOT EXISTS idx_keys_status_transient
 CREATE INDEX IF NOT EXISTS idx_task_queue_target_shard_id
     ON task_queue (target_shard_id, status)
     WHERE target_shard_id IS NOT NULL;
+
+-- Named partitions. A partition is a separate physical index
+-- sharing the parent's schema/key/centroids; `partitions` maps
+-- (index_name, partition_name) -> physical_index_name, and indexes.parent_index_name
+-- links a partition's physical index back to its parent. _default's physical index
+-- IS the parent index itself. Additive + idempotent; initSchema builds these on a
+-- fresh install, so existing DBs get them here. The backfill gives every existing
+-- top-level index its _default partition.
+ALTER TABLE indexes ADD COLUMN IF NOT EXISTS parent_index_name VARCHAR(30) NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS partitions (
+    partition_id        BIGSERIAL    PRIMARY KEY,
+    index_name          VARCHAR(30)  NOT NULL,
+    partition_name      VARCHAR(255) NOT NULL,
+    physical_index_name VARCHAR(30)  NOT NULL,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'active',
+    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_partitions_index
+        FOREIGN KEY (index_name) REFERENCES indexes (index_name)
+        ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_partition_index_name_partition_name
+    ON partitions (index_name, partition_name);
+
+INSERT INTO partitions (index_name, partition_name, physical_index_name, status)
+SELECT index_name, '_default', index_name, 'active'
+FROM indexes
+WHERE parent_index_name = ''
+ON CONFLICT (index_name, partition_name) DO NOTHING;
 
 COMMIT;
 

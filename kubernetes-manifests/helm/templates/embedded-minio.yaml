@@ -68,12 +68,16 @@ spec:
             - name: minio-data
               mountPath: /data
           resources:
+            {{- with .Values.embeddedMinio.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- else }}
             requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
+              cpu: 250m
               memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /minio/health/ready
