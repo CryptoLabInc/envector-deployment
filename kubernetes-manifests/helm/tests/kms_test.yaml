@@ -1,0 +1,124 @@
+suite: kms
+set:
+  compute.license.token: "dummy-token"
+  embeddedMinio.enabled: true
+  embeddedMinio.rootPassword: "pw12345678"
+tests:
+  - it: renders nothing when kms is disabled
+    template: templates/kms-deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: never gives the control plane the GCP backend or credentials
+    template: templates/kms-deployment.yaml
+    set:
+      kms.enabled: true
+      kms.tee.addr: "10.0.0.5:50062"
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ENVECTOR_KMS_SECRET_BACKEND
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ENVECTOR_KMS_GCP_PROJECT
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOOGLE_APPLICATION_CREDENTIALS
+          any: true
+
+  - it: dials the external CVM in external mode
+    template: templates/kms-deployment.yaml
+    set:
+      kms.enabled: true
+      kms.tee.addr: "10.0.0.5:50062"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_KMS_TEE_ADDR")].value
+          value: "10.0.0.5:50062"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_KMS_TEE_REQUIRE_MTLS")].value
+          value: "false"
+
+  - it: dials the in-cluster TEE Service in in-cluster mode
+    template: templates/kms-deployment.yaml
+    set:
+      kms.enabled: true
+      kms.tee.mode: in-cluster
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_KMS_TEE_ADDR")].value
+          value: RELEASE-NAME-envector-chart-kms-tee:50062
+
+  - it: fails when external mode has no CVM address
+    template: templates/kms-deployment.yaml
+    set:
+      kms.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: 'kms.tee.mode=external requires kms.tee.addr ("<cvm-host>:50062")'
+
+  - it: rejects a partial per-role SA set
+    template: templates/kms-tee-deployment.yaml
+    set:
+      kms.enabled: true
+      kms.tee.mode: in-cluster
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+      kms.gcp.serviceAccounts.keygen: keygen@my-gcp-project.iam.gserviceaccount.com
+    asserts:
+      - failedTemplate:
+          errorMessage: "kms.gcp.serviceAccounts: set all five per-role SAs or none — a partial set fails at TEE startup"
+
+  - it: rejects attestation-required config on an unattested pod
+    template: templates/kms-tee-deployment.yaml
+    set:
+      kms.enabled: true
+      kms.tee.mode: in-cluster
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+      kms.gcp.requireAttestedBase: true
+    asserts:
+      - failedTemplate: {}
+
+  - it: grants the in-cluster TEE CAP_IPC_LOCK so mlock cannot fail closed
+    template: templates/kms-tee-deployment.yaml
+    documentIndex: 1
+    set:
+      kms.enabled: true
+      kms.tee.mode: in-cluster
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: IPC_LOCK
+
+  - it: keeps the in-cluster TEE off any external Service type
+    template: templates/kms-service.yaml
+    documentIndex: 1
+    set:
+      kms.enabled: true
+      kms.tee.mode: in-cluster
+      kms.service.type: LoadBalancer
+      kms.gcp.project: my-gcp-project
+      kms.gcp.kmsKeyring: envector-kms
+      kms.gcp.kmsKey: envector-kek
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP

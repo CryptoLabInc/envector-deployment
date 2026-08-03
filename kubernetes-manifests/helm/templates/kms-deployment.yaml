@@ -1,0 +1,208 @@
+{{- if .Values.kms.enabled }}
+{{- $teeMode := .Values.kms.tee.mode | default "external" }}
+{{- if not (has $teeMode (list "external" "in-cluster")) }}
+{{- fail (printf "kms.tee.mode must be \"external\" or \"in-cluster\", got %q" $teeMode) }}
+{{- end }}
+{{- $teeAddr := include "envector-chart.kmsTeeAddr" . }}
+{{- if not $teeAddr }}
+{{- fail "kms.tee.mode=external requires kms.tee.addr (\"<cvm-host>:50062\")" }}
+{{- end }}
+{{- $storageEndpoint := include "envector-chart.kmsStorageEndpoint" . }}
+{{- if not $storageEndpoint }}
+{{- fail "kms.enabled requires an object store: set kms.storage.endpoint, or enable embeddedMinio, or set externalServices.storage.host/port" }}
+{{- end }}
+{{- if and (eq (.Values.externalServices.storage.provider | default "s3") "gcs") (not .Values.kms.storage.existingSecret) }}
+{{- fail "kms uses an S3/MinIO client and cannot use externalServices.storage.provider=gcs: set kms.storage.endpoint and kms.storage.existingSecret" }}
+{{- end }}
+{{- if and .Values.kms.tls.require (not .Values.kms.tls.existingSecret) }}
+{{- fail "kms.tls.require=true needs kms.tls.existingSecret (the server refuses to start without a cert)" }}
+{{- end }}
+{{- if and .Values.kms.tee.mtls.enabled (not .Values.kms.tee.mtls.existingSecret) }}
+{{- fail "kms.tee.mtls.enabled=true needs kms.tee.mtls.existingSecret (tls.crt/tls.key/ca.crt)" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.kmsName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.kms.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.kms.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.kmsName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.kmsName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.kms.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.kms.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kms.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kms.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.kmsName" . }}
+          image: "{{ .Values.kms.image.repository }}:{{ .Values.kms.image.tag }}"
+          imagePullPolicy: {{ .Values.kms.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.kms.service.port | default 50060 }}
+            - name: http
+              containerPort: {{ .Values.kms.service.httpPort | default 8080 }}
+          {{- if .Values.observability.enabled }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "envector-chart.fullname" . }}-otel-config
+          {{- end }}
+          env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: envector-kms
+            {{- end }}
+            - name: ENVECTOR_KMS_PORT
+              value: {{ .Values.kms.service.port | default 50060 | quote }}
+            - name: ENVECTOR_KMS_HTTP_PORT
+              value: {{ .Values.kms.service.httpPort | default 8080 | quote }}
+            - name: ENVECTOR_KMS_LOG_LEVEL
+              value: {{ .Values.kms.logLevel | default "info" | quote }}
+            - name: ENVECTOR_KMS_KEY_DIR
+              value: /data/keys
+            - name: ENVECTOR_KMS_DEFAULT_PRESET
+              value: {{ .Values.kms.defaultPreset | default "ip3" | quote }}
+            - name: ENVECTOR_KMS_DEFAULT_EVAL_MODE
+              value: {{ .Values.kms.defaultEvalMode | default "mms32" | quote }}
+            - name: ENVECTOR_KMS_MINIO_ENDPOINT
+              value: {{ $storageEndpoint | quote }}
+            - name: ENVECTOR_KMS_MINIO_BUCKET
+              value: {{ .Values.kms.storage.bucket | default "kms-keys" | quote }}
+            - name: ENVECTOR_KMS_MINIO_USE_SSL
+              value: {{ .Values.kms.storage.useSSL | default false | quote }}
+            - name: ENVECTOR_KMS_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "envector-chart.kmsStorageSecretName" . }}
+                  key: {{ .Values.kms.storage.userKey | default "ENVECTOR_STORAGE_USER" }}
+            - name: ENVECTOR_KMS_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "envector-chart.kmsStorageSecretName" . }}
+                  key: {{ .Values.kms.storage.passwordKey | default "ENVECTOR_STORAGE_PASSWORD" }}
+            - name: ENVECTOR_KMS_TEE_ADDR
+              value: {{ $teeAddr | quote }}
+            {{- /* No ENVECTOR_KMS_SECRET_BACKEND / GCP env / credentials here, by
+                   design: only the TEE may read a sealed key or unwrap the DEK. */}}
+            - name: ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS
+              value: {{ .Values.kms.tls.require | default false | quote }}
+            {{- if .Values.kms.tls.existingSecret }}
+            - name: ENVECTOR_KMS_HTTP_TLS_CERT
+              value: /certs/api/tls.crt
+            - name: ENVECTOR_KMS_HTTP_TLS_KEY
+              value: /certs/api/tls.key
+            - name: ENVECTOR_KMS_GRPC_TLS_CERT
+              value: /certs/api/tls.crt
+            - name: ENVECTOR_KMS_GRPC_TLS_KEY
+              value: /certs/api/tls.key
+            {{- end }}
+            - name: ENVECTOR_KMS_TEE_REQUIRE_MTLS
+              value: {{ .Values.kms.tee.mtls.enabled | default false | quote }}
+            {{- if .Values.kms.tee.mtls.enabled }}
+            - name: ENVECTOR_KMS_TEE_TLS_CLIENT_CERT
+              value: /certs/tee-client/tls.crt
+            - name: ENVECTOR_KMS_TEE_TLS_CLIENT_KEY
+              value: /certs/tee-client/tls.key
+            - name: ENVECTOR_KMS_TEE_TLS_SERVER_CA
+              value: /certs/tee-client/ca.crt
+            - name: ENVECTOR_KMS_TEE_TLS_SERVER_NAME
+              value: {{ .Values.kms.tee.mtls.serverName | default "cptee-server" | quote }}
+            {{- end }}
+            {{- if .Values.kms.auth.enabled }}
+            - name: ENVECTOR_KMS_AUTH_OIDC_ISSUER
+              value: {{ .Values.kms.auth.oidcIssuer | quote }}
+            - name: ENVECTOR_KMS_AUTH_JWKS_URL
+              value: {{ .Values.kms.auth.jwksUrl | quote }}
+            - name: ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES
+              value: {{ join "," .Values.kms.auth.allowedAudiences | quote }}
+            - name: ENVECTOR_KMS_AUTH_ROLE_CLAIM
+              value: {{ .Values.kms.auth.roleClaim | default "envector_roles" | quote }}
+            - name: ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM
+              value: {{ .Values.kms.auth.principalClaim | default "sub" | quote }}
+            - name: ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON
+              value: {{ .Values.kms.auth.capabilityPolicyJson | quote }}
+            - name: ENVECTOR_JWT_LEEWAY_SECONDS
+              value: {{ .Values.kms.auth.jwtLeewaySeconds | default 0 | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: kms-keys
+              mountPath: /data/keys
+            {{- if .Values.kms.tls.existingSecret }}
+            - name: api-certs
+              mountPath: /certs/api
+              readOnly: true
+            {{- end }}
+            {{- if .Values.kms.tee.mtls.enabled }}
+            - name: tee-client-certs
+              mountPath: /certs/tee-client
+              readOnly: true
+            {{- end }}
+          {{- /* TCP probes, not HTTP: /api/health sits behind the auth
+                 middleware and the listener may be TLS. */}}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.kms.resources | nindent 12 }}
+      volumes:
+        - name: kms-keys
+          emptyDir: {}
+        {{- if .Values.kms.tls.existingSecret }}
+        - name: api-certs
+          secret:
+            secretName: {{ .Values.kms.tls.existingSecret }}
+        {{- end }}
+        {{- if .Values.kms.tee.mtls.enabled }}
+        - name: tee-client-certs
+          secret:
+            secretName: {{ .Values.kms.tee.mtls.existingSecret }}
+        {{- end }}
+{{- end }}

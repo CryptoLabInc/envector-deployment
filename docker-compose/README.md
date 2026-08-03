@@ -40,7 +40,7 @@ Optional: you can login manually ahead of time if you prefer.
 ## ✅ Step 2. Prepare Environment
 
 ```bash
-cd deployment/docker-compose
+cd docker-compose
 # If .env is missing, ./start_envector.sh will auto-create it from .env.example
 cp .env.example .env  # optional
 ```

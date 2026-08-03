@@ -1,0 +1,28 @@
+# Throwaway apply-validation tfvars. Copy to validate.auto.tfvars (gitignored) and
+# `terraform apply` then `terraform destroy` against a real project to confirm GCP
+# accepts every SA / custom role / IAM binding and the CMEK reference resolves.
+#
+# Uses TEST-SCOPED names so soft-deleted roles (7-day) and SAs (30-day) never
+# collide with production ids. Bump the suffix each run.
+
+project_id = "my-gcp-project"
+
+# Existing customer-managed CMEK (global). Referenced, not created.
+kms_keyring = "envector-kms-p0-test"
+kms_key     = "kek-p0-test"
+
+# Existing Artifact Registry repo holding the kms-tee image.
+ar_location   = "asia-northeast3"
+ar_repository = "es2-images"
+
+# The runner SA to grant AR reader. For a standalone validate, any existing SA
+# works (it only needs to exist); in production this is module.kms_wif.runner_sa_email.
+runner_sa_email = "envector-kms-tee-runner@my-gcp-project.iam.gserviceaccount.com"
+
+# Test-scoped names (never the production ek-* / envectorKms* ids).
+keygen_sa_account_id          = "ek-keygen-tfval"
+rotate_sa_account_id          = "ek-rotate-tfval"
+key_info_sa_account_id        = "ek-key-info-tfval"
+score_decryptor_sa_account_id = "ek-score-decryptor-tfval"
+metadata_cipher_sa_account_id = "ek-meta-cipher-tfval"
+custom_role_id_suffix         = "Tfval"

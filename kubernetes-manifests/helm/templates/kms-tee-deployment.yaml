@@ -1,0 +1,174 @@
+{{- if and .Values.kms.enabled (eq (.Values.kms.tee.mode | default "external") "in-cluster") }}
+{{- $gcp := .Values.kms.gcp }}
+{{- $saList := list $gcp.serviceAccounts.keygen $gcp.serviceAccounts.rotate $gcp.serviceAccounts.keyInfo $gcp.serviceAccounts.scoreDecryptor $gcp.serviceAccounts.metadataCipher }}
+{{- $saSet := 0 }}
+{{- range $saList }}{{- if . }}{{- $saSet = add1 $saSet }}{{- end }}{{- end }}
+{{- if and (gt $saSet 0) (lt $saSet 5) }}
+{{- fail "kms.gcp.serviceAccounts: set all five per-role SAs or none — a partial set fails at TEE startup" }}
+{{- end }}
+{{- if not (and $gcp.project $gcp.kmsKeyring $gcp.kmsKey) }}
+{{- fail "kms.tee.mode=in-cluster requires kms.gcp.project, kms.gcp.kmsKeyring and kms.gcp.kmsKey" }}
+{{- end }}
+{{- if $gcp.requireAttestedBase }}
+{{- fail "kms.gcp.requireAttestedBase=true cannot be satisfied by an in-cluster pod — it needs an attested Confidential Space CVM (kms.tee.mode=external)" }}
+{{- end }}
+{{- if and .Values.kms.tee.mtls.enabled (not .Values.kms.tee.mtls.serverSecret) }}
+{{- fail "kms.tee.mode=in-cluster with mtls needs kms.tee.mtls.serverSecret — a distinct leaf from the control-plane client cert" }}
+{{- end }}
+{{- if .Values.kms.tee.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "envector-chart.kmsTeeServiceAccountName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsTeeName" . }}
+  {{- with .Values.kms.tee.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.kmsTeeName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsTeeName" . }}
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- /* Single replica: the TEE holds mlocked key material and the control
+         plane dials one address; scaling out is a separate design. */}}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" . }}
+      component: {{ include "envector-chart.kmsTeeName" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "envector-chart.fullname" . }}
+        component: {{ include "envector-chart.kmsTeeName" . }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "envector-chart.kmsTeeServiceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.kms.tee.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kms.tee.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kms.tee.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ include "envector-chart.kmsTeeName" . }}
+          image: "{{ .Values.kms.tee.image.repository }}:{{ .Values.kms.tee.image.tag }}"
+          imagePullPolicy: {{ .Values.kms.tee.image.pullPolicy | default "IfNotPresent" }}
+          {{- if .Values.kms.tee.ipcLock }}
+          {{- /* A pod cannot raise RLIMIT_MEMLOCK; CAP_IPC_LOCK lets the TEE
+                 mlock secret-key pages instead of failing every decrypt. */}}
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.kms.tee.grpcPort | default 50062 }}
+          env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
+            - name: ENVECTOR_KMS_TEE_GRPC_PORT
+              value: {{ .Values.kms.tee.grpcPort | default 50062 | quote }}
+            - name: ENVECTOR_KMS_LOG_LEVEL
+              value: {{ .Values.kms.logLevel | default "info" | quote }}
+            - name: ENVECTOR_KMS_DEVICE_TYPE
+              value: {{ .Values.kms.tee.deviceType | default "cpu" | quote }}
+            - name: ENVECTOR_KMS_DECRYPT_TOPK_JOBS
+              value: {{ .Values.kms.tee.decryptTopkJobs | default 1 | quote }}
+            - name: ENVECTOR_KMS_SECRET_BACKEND
+              value: gcp
+            - name: ENVECTOR_KMS_GCP_PROJECT
+              value: {{ $gcp.project | quote }}
+            - name: ENVECTOR_KMS_GCP_KMS_KEYRING
+              value: {{ $gcp.kmsKeyring | quote }}
+            - name: ENVECTOR_KMS_GCP_KMS_KEY
+              value: {{ $gcp.kmsKey | quote }}
+            - name: ENVECTOR_KMS_GCP_KMS_KEY_METADATA
+              value: {{ $gcp.kmsKeyMetadata | default "" | quote }}
+            - name: ENVECTOR_KMS_GCP_SECRET_PREFIX
+              value: {{ $gcp.secretPrefix | default "envector-kms" | quote }}
+            {{- if eq $saSet 5 }}
+            - name: ENVECTOR_KMS_GCP_SA_KEYGEN
+              value: {{ $gcp.serviceAccounts.keygen | quote }}
+            - name: ENVECTOR_KMS_GCP_SA_ROTATE
+              value: {{ $gcp.serviceAccounts.rotate | quote }}
+            - name: ENVECTOR_KMS_GCP_SA_KEY_INFO
+              value: {{ $gcp.serviceAccounts.keyInfo | quote }}
+            - name: ENVECTOR_KMS_GCP_SA_SCORE_DECRYPTOR
+              value: {{ $gcp.serviceAccounts.scoreDecryptor | quote }}
+            - name: ENVECTOR_KMS_GCP_SA_METADATA_CIPHER
+              value: {{ $gcp.serviceAccounts.metadataCipher | quote }}
+            {{- end }}
+            - name: ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE
+              value: "false"
+            {{- if $gcp.baseSA }}
+            - name: ENVECTOR_KMS_GCP_BASE_SA
+              value: {{ $gcp.baseSA | quote }}
+            {{- end }}
+            {{- if $gcp.wifAudience }}
+            - name: ENVECTOR_KMS_GCP_WIF_AUDIENCE
+              value: {{ $gcp.wifAudience | quote }}
+            {{- end }}
+            - name: ENVECTOR_KMS_TEE_REQUIRE_MTLS
+              value: {{ .Values.kms.tee.mtls.enabled | default false | quote }}
+            {{- if .Values.kms.tee.mtls.enabled }}
+            - name: ENVECTOR_KMS_TEE_TLS_CERT
+              value: /certs/tee-server/tls.crt
+            - name: ENVECTOR_KMS_TEE_TLS_KEY
+              value: /certs/tee-server/tls.key
+            - name: ENVECTOR_KMS_TEE_TLS_CLIENT_CA
+              value: /certs/tee-server/ca.crt
+            - name: ENVECTOR_KMS_TEE_TLS_CLIENT_NAME
+              value: {{ .Values.kms.tee.mtls.clientName | default "cptee-client" | quote }}
+            {{- end }}
+          {{- if .Values.kms.tee.mtls.enabled }}
+          volumeMounts:
+            - name: tee-server-certs
+              mountPath: /certs/tee-server
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.kms.tee.resources | nindent 12 }}
+      {{- if .Values.kms.tee.mtls.enabled }}
+      volumes:
+        - name: tee-server-certs
+          secret:
+            secretName: {{ .Values.kms.tee.mtls.serverSecret }}
+      {{- end }}
+{{- end }}

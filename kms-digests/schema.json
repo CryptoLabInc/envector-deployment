@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://envector/deployment/kms-digests/schema.json",
+  "title": "kms-tee released image digest manifest",
+  "description": "Single source of truth for released kms-tee image digests and their allowlist lifecycle status. Each active entry is a standing key-access credential.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "digest",
+      "release",
+      "status"
+    ],
+    "properties": {
+      "digest": {
+        "type": "string",
+        "description": "amd64 image manifest digest reported by the Confidential Space VM.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "release": {
+        "type": "string",
+        "description": "Release tag the digest was built from (human traceability).",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string",
+        "description": "Allowlist lifecycle state. Only active entries are derived into live allowlists.",
+        "enum": [
+          "active",
+          "deprecated",
+          "revoked"
+        ]
+      }
+    }
+  }
+}

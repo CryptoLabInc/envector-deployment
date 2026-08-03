@@ -510,7 +510,7 @@ marketplace:
   # CryptoLab's partner ID from GCP Producer Portal (Account Management > Settings).
   partnerId: "001Kf00001CPDeXIAX"
   # GCP Marketplace service name used for Service Control API entitlement check and ubbagent metering.
-  serviceName: "envector-sm.endpoints.heaan-public.cloud.goog"
+  serviceName: "envector-sm.endpoints.my-gcp-project.cloud.goog"
 
 # Usage-based billing agent (GCP Marketplace)
 # ubbagent sidecar runs in each compute pod and reports "1 active replica"
@@ -670,3 +670,133 @@ apptest:
   # Pinned to a fixed SHA on the public SDK repo so a force-push to main does
   # not silently change verify behaviour. Bump together with pyenvectorVersion.
   e2eUrl: "https://raw.githubusercontent.com/CryptoLabInc/envector-python-sdk/34ba339530e7a660e12c6d2fb50e1f1b6f029a65/example/client_and_server/e2e/e2e.py"
+
+kms:
+  enabled: false
+  # Use "kms" if your release/chart name already includes "envector"
+  name: ""
+  labels: {}
+  image:
+    repository: cryptolabinc/envector-kms
+    tag: main
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    # gRPC API the SDK dials (init_kms_connect)
+    port: 50060
+    # REST API + web console
+    httpPort: 8080
+    annotations: {}
+  logLevel: info
+  # Must match what clients pass; a key generated under one preset/eval-mode
+  # pair and indexed under another is incompatible.
+  defaultPreset: ip3
+  defaultEvalMode: mms32
+  # Public-key object storage. Defaults to the same store the MSA services use
+  # (embeddedMinio or externalServices.storage) with a separate bucket.
+  # externalServices.storage.provider=gcs is NOT supported here — the KMS uses
+  # an S3/MinIO client — so set endpoint + existingSecret explicitly in that case.
+  storage:
+    endpoint: ""
+    bucket: kms-keys
+    useSSL: false
+    # Override the credentials Secret. Empty = the chart's storage Secret.
+    existingSecret: ""
+    userKey: ENVECTOR_STORAGE_USER
+    passwordKey: ENVECTOR_STORAGE_PASSWORD
+  # TLS on the external KMS API (gRPC + HTTP). Provide a kubernetes.io/tls
+  # Secret (cert-manager, or created by hand).
+  tls:
+    existingSecret: ""
+    # Refuse to serve cleartext. Requires existingSecret.
+    require: false
+  auth:
+    enabled: false
+    oidcIssuer: "" # Example: https://keycloak.example.com/realms/envector
+    allowedAudiences: []
+    roleClaim: "envector_roles"
+    principalClaim: "sub"
+    jwksUrl: ""
+    capabilityPolicyJson: ""
+    jwtLeewaySeconds: 0 # JWT validation clock-skew tolerance in seconds (0 = strict)
+  tee:
+    # "external"   — attested Confidential Space CVM outside the cluster (production).
+    # "in-cluster" — envector-kms-tee as a pod, unattested (development only).
+    mode: external
+    name: ""
+    # external mode: "<cvm-ip-or-dns>:50062". The CVM must be reachable from the
+    # pod network (same VPC) and its firewall must admit the GKE pod CIDR.
+    addr: ""
+    grpcPort: 50062
+    # Control-plane -> TEE mTLS. Off by default: the Confidential Space CVM
+    # serves :50062 plaintext today (see the GCP KMS backend runbook §4.2).
+    mtls:
+      enabled: false
+      # Control-plane client identity: Secret with tls.crt / tls.key + ca.crt.
+      existingSecret: ""
+      # in-cluster mode only — the TEE's own server identity. A distinct leaf
+      # from existingSecret, so neither side can impersonate the other.
+      serverSecret: ""
+      # SANs each side pins on the peer leaf.
+      serverName: cptee-server
+      clientName: cptee-client
+    # --- in-cluster mode only ---
+    image:
+      repository: cryptolabinc/envector-kms-tee
+      tag: main
+      pullPolicy: IfNotPresent
+    deviceType: cpu
+    decryptTopkJobs: 1
+    # The TEE mlocks secret-key pages so they never swap. Pods cannot raise
+    # RLIMIT_MEMLOCK, so grant CAP_IPC_LOCK instead or every decrypt fails closed.
+    ipcLock: true
+    serviceAccount:
+      create: true
+      name: ""
+      # GKE Workload Identity, e.g.
+      #   iam.gke.io/gcp-service-account: ek-tee-base@<project>.iam.gserviceaccount.com
+      annotations: {}
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+  # GCP secret backend. Consumed by the TEE only — never by the control plane,
+  # which must not be able to unwrap a sealed key. In external mode the CVM
+  # launcher sets these as attested tee-env metadata, so leave them empty here.
+  gcp:
+    project: ""
+    kmsKeyring: ""
+    kmsKey: ""
+    kmsKeyMetadata: ""
+    secretPrefix: envector-kms
+    # Five per-role SAs from the kms-iam Terraform module's per_role_sa_emails
+    # output. All five or none — a partial set fails at startup.
+    serviceAccounts:
+      keygen: ""
+      rotate: ""
+      keyInfo: ""
+      scoreDecryptor: ""
+      metadataCipher: ""
+    # Attestation guard. Only satisfiable on a Confidential Space CVM, so it
+    # stays false for in-cluster mode.
+    requireAttestedBase: false
+    baseSA: ""
+    wifAudience: ""
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+

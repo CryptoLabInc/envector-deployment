@@ -1,0 +1,8 @@
+# Local terraform state / provider cache / real tfvars (never commit)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
+!*.auto.tfvars.example
+crash.log

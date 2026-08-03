@@ -15,7 +15,7 @@
 - **⚡ High Performance**: Optimized vector similarity search algorithms
 - **🏗️ Microservices Architecture**: Scalable and maintainable service design
 - **🐳 Multi-Platform Deployment**: Docker Compose and Kubernetes (Helm) support
-- **🔑 Managed Key Management (KMS)**: Optional server-side key custody backed by HashiCorp Vault
+- **🔑 Managed Key Management (KMS)**: Optional server-side key custody backed by HashiCorp Vault, or by Cloud KMS + Secret Manager on GCP with an attested Confidential Space TEE
 - **👤 Authentication & Authorization**: Optional OIDC integration (Keycloak) with per-principal access control
 - **📝 Audit Logging**: Optional tamper-evident audit pipeline (Redpanda) for API and key operations
 - **📱 Python SDK**: Easy-to-use client library for integration
@@ -100,6 +100,15 @@ envector-deployment/
 │   │   ├── templates/               # K8s manifest templates (incl. HA PodDisruptionBudgets)
 │   │   └── tests/                   # Helm chart tests (HA)
 │   └── README.md                    # K8s deployment guide
+├── terraform/gcp/                   # GCP-native KMS backend (IaC)
+│   ├── kms-iam/                     # 5 per-role SAs + least-privilege IAM
+│   ├── kms-wif/                     # Workload Identity pool + attested provider
+│   └── kms-root/                    # applies both in a single terraform apply
+├── gcp-confidential-space/          # Confidential Space CVM launcher for kms-tee
+├── kms-digests/                     # released kms-tee image digest allowlist + tooling
+├── docs/                            # Deployment guides
+│   └── gcp-kms-backend-guide.md     # GCP-native KMS: deploy, operate, use
+├── examples/kms/                    # KMS SDK end-to-end examples
 ├── scripts/                         # Operational scripts
 │   ├── auth/                        # Keycloak token + user seeding helpers
 │   └── migrations/                  # DB migration SQL + upgrade runbooks
@@ -118,7 +127,7 @@ Recommended for Development. See more details in [docker-compose README](docker-
 ```bash
 # Clone the repository
 git clone https://github.com/CryptoLabInc/envector-deployment.git
-cd envector-deployment/docker-compose
+cd envector-docker-compose
 
 # Copy environment file (optional)
 # If .env is missing, ./start_envector.sh will be created from .env.example automatically
@@ -178,6 +187,7 @@ kubectl get svc
 enVector ships optional overlays that layer managed key custody, authentication, transport security, and audit logging on top of the core stack. They are opt-in and composed via `start_envector.sh` flags (Docker Compose) or Helm values (Kubernetes). For step-by-step setup, see the [docker-compose README](docker-compose/README.md).
 
 - **KMS** (`--kms`): Server-side FHE key custody backed by HashiCorp Vault. Uses service TLS by default (implies the local CA overlay). A no-TLS variant (`--kms-notls`) is available for development only.
+- **KMS on GCP** (no Vault): the same key custody backed by Cloud KMS (CMEK) and Secret Manager, with the plaintext secret key confined to an attested Confidential Space VM. End-to-end setup on GKE is in [`docs/gcp-kms-backend-guide.md`](docs/gcp-kms-backend-guide.md).
 - **Authentication** (`--keycloak`): OIDC-based authentication and per-principal authorization via Keycloak. Token helpers live in [`scripts/auth/`](scripts/auth/).
 - **Audit Logging** (`--audit`, `--kms-audit`): Tamper-evident audit trail for API and key-management operations, exported to S3-compatible storage.
 - **Local CA** (`--ca`): step-ca based certificate authority that issues TLS certificates for service-to-service communication.

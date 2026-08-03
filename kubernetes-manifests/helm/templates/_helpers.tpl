@@ -151,3 +151,49 @@ Only returns "<host>:<port>" when both are provided; otherwise returns "".
 {{- "" -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "envector-chart.kmsName" -}}
+{{- default "kms" .Values.kms.name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "envector-chart.kmsTeeName" -}}
+{{- default "kms-tee" .Values.kms.tee.name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "envector-chart.kmsTeeServiceAccountName" -}}
+{{- if .Values.kms.tee.serviceAccount.create -}}
+{{- default (printf "%s-%s" (include "envector-chart.fullname" .) (include "envector-chart.kmsTeeName" .)) .Values.kms.tee.serviceAccount.name -}}
+{{- else -}}
+{{- default (include "envector-chart.serviceAccountName" .) .Values.kms.tee.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envector-chart.kmsTeeAddr" -}}
+{{- if eq .Values.kms.tee.mode "external" -}}
+{{- .Values.kms.tee.addr -}}
+{{- else -}}
+{{- printf "%s-%s:%v" (include "envector-chart.fullname" .) (include "envector-chart.kmsTeeName" .) (.Values.kms.tee.grpcPort | default 50062) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envector-chart.kmsStorageEndpoint" -}}
+{{- if .Values.kms.storage.endpoint -}}
+{{- .Values.kms.storage.endpoint -}}
+{{- else if eq (toString .Values.embeddedMinio.enabled) "true" -}}
+{{- printf "%s-embedded-minio:9000" (include "envector-chart.fullname" .) -}}
+{{- else -}}
+{{- include "envector-chart.storageEndpoint" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envector-chart.kmsStorageSecretName" -}}
+{{- default (include "envector-chart.storageSecretName" .) .Values.kms.storage.existingSecret -}}
+{{- end -}}
+
+{{- define "envector-chart.gomaxprocsEnv" -}}
+- name: GOMAXPROCS
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.cpu
+      divisor: "1"
+{{- end -}}

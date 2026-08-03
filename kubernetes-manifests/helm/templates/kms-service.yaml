@@ -1,0 +1,52 @@
+{{- if .Values.kms.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.kmsName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsName" . }}
+{{- with .Values.kms.service.annotations }}
+  annotations:
+  {{- toYaml . | nindent 4 }}
+{{- end }}
+spec:
+  type: {{ .Values.kms.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.kms.service.port | default 50060 }}
+      name: grpc
+      targetPort: {{ .Values.kms.service.port | default 50060 }}
+      protocol: TCP
+      {{- if and (eq (.Values.kms.service.type | default "ClusterIP") "NodePort") .Values.kms.service.nodePort }}
+      nodePort: {{ .Values.kms.service.nodePort }}
+      {{- end }}
+    - port: {{ .Values.kms.service.httpPort | default 8080 }}
+      name: http
+      targetPort: {{ .Values.kms.service.httpPort | default 8080 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsName" . }}
+{{- if eq (.Values.kms.tee.mode | default "external") "in-cluster" }}
+---
+{{- /* ClusterIP only — the TEE must never be reachable from outside the
+       cluster network. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "envector-chart.fullname" . }}-{{ include "envector-chart.kmsTeeName" . }}
+  labels:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsTeeName" . }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.kms.tee.grpcPort | default 50062 }}
+      name: grpc
+      targetPort: {{ .Values.kms.tee.grpcPort | default 50062 }}
+      protocol: TCP
+  selector:
+    app: {{ include "envector-chart.fullname" . }}
+    component: {{ include "envector-chart.kmsTeeName" . }}
+{{- end }}
+{{- end }}
