@@ -1043,6 +1043,11 @@ by label so they work regardless of the release name:
 ENDPOINT_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=endpoint -o name | head -1)"
 KMS_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=kms -o name | head -1)"
 
+# Re-running this section: a port-forward from an earlier attempt still holds the local
+# port and the new one fails with "address already in use". Background jobs outlive the
+# shell that started them. Scoped to this namespace so unrelated forwards survive.
+pkill -f "kubectl.*$K8S_NAMESPACE.*port-forward" 2>/dev/null
+
 kubectl -n "$K8S_NAMESPACE" port-forward "$ENDPOINT_SVC" 50050:50050 &
 kubectl -n "$K8S_NAMESPACE" port-forward "$KMS_SVC" 50090:50060 &
 ```
