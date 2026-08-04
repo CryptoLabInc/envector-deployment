@@ -592,10 +592,19 @@ carries the Confidential Space launch-policy labels
 
   ```bash
   cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"   # or kms-wif
-  cat > test-manifest.json <<JSON
+
+  # The guard matters: a DIGEST left over from an earlier command would otherwise be
+  # written out, and the failure then surfaces as a Terraform precondition about digest
+  # shape — two steps away from the cause.
+  if printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+    cat > test-manifest.json <<JSON
   [{"digest":"${DIGEST}","release":"${TAG}","status":"active"}]
   JSON
-  jq . test-manifest.json          # must parse; a multi-line DIGEST shows up here
+    jq . test-manifest.json && echo "written"
+  else
+    echo "stopping: DIGEST is not sha256:<64-hex>, nothing written"
+    printf '%s' "$DIGEST" | cat -A | head -3
+  fi
   ```
 
   Then set `manifest_path = "./test-manifest.json"` in that module's tfvars — without it the
