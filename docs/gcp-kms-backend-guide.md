@@ -791,9 +791,9 @@ used the old default, set `pool_id` to the existing value or Terraform destroys 
 
 ### 4.1 Launch the attested CVM
 
-Run from `terraform/gcp` so the `-chdir=kms-root` output reads resolve;
-`wif-credconfig.json` (from 3.1) sits in the `kms-root/` subdir. `TEE_IMAGE` **must** be pinned by `@sha256`
-digest (the allowlisted one), not a tag.
+This block runs from `terraform/gcp`, one level above where 3.1 left you — the
+`cd` below does it, since `-chdir=kms-root`, the credconfig path, and the launcher path are all
+relative to it. `TEE_IMAGE` **must** be pinned by `@sha256` digest (the allowlisted one), not a tag.
 
 > **Why the launcher passes config as `tee-env-*` env vars — they are the attested
 > contract.** Confidential Space includes the container's environment in the attestation
@@ -811,6 +811,8 @@ digest (the allowlisted one), not a tag.
 > NAMES and emails, not secrets.)
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/terraform/gcp"   # every path below is relative to here
+
 export PROJECT_ID=my-gcp-project ZONE=asia-northeast3-a INSTANCE=envector-kms-tee-cs
 export MACHINE_TYPE=n2d-standard-2                 # n2d -> SEV; c3-* -> TDX
 # The digest MUST be the one from 2.1 that you wrote into the manifest — a stale or
@@ -998,6 +1000,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 90 \
 
 kubectl -n "$K8S_NAMESPACE" create secret tls envector-kms-api-tls \
   --cert=/tmp/kms-root-ca.crt --key=/tmp/kms-tls.key
+
+cd "$(git rev-parse --show-toplevel)/kubernetes-manifests"   # ./helm resolves from here
 
 helm upgrade envector ./helm -n "$K8S_NAMESPACE" --reuse-values \
   --set kms.tls.existingSecret=envector-kms-api-tls \
