@@ -566,17 +566,15 @@ docker pull --platform linux/amd64 "${RELEASED_KMS_TEE}"
 docker tag  "${RELEASED_KMS_TEE}" "${AR_REF}:${TAG}"
 docker push "${AR_REF}:${TAG}"
 
-# Capture the MANIFEST digest (what attestation reports as image_digest) into a variable,
-# so it is never retyped. gcloud is used rather than `docker buildx imagetools inspect
-# --format` because older buildx silently ignores the template and prints its whole
-# human-readable block instead, which then lands in the manifest as multi-line JSON.
-DIGEST="$(gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
-  --format='value(image_summary.digest)')"
-
-# Check the shape before anything consumes it. A truncated value, an image ID, or a stray
-# newline all produce a condition no CVM can ever satisfy — and you find out in 4.1.
-printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
-  && echo "digest OK: $DIGEST" || { echo "MALFORMED:"; printf '%s' "$DIGEST" | cat -A; }
+# Print the MANIFEST digest — the value attestation reports as image_digest. Copy it;
+# 2.2 pastes it in literally. Deliberately not captured into a shell variable: a variable
+# outlives the command that set it, so a stale value from an earlier attempt reaches the
+# manifest looking plausible and the failure surfaces two steps later, in Terraform.
+# Use gcloud, not `docker buildx imagetools inspect --format` — older buildx ignores the
+# template and prints its whole human-readable block instead.
+gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
+  --format='value(image_summary.digest)'
+# -> sha256:<64 hex chars>   — one line, nothing else
 ```
 
 Notes: retagging the same image keeps the same digest (only a changed layer produces a new
@@ -593,18 +591,14 @@ carries the Confidential Space launch-policy labels
   ```bash
   cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"   # or kms-wif
 
-  # The guard matters: a DIGEST left over from an earlier command would otherwise be
-  # written out, and the failure then surfaces as a Terraform precondition about digest
-  # shape — two steps away from the cause.
-  if printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-    cat > test-manifest.json <<JSON
-  [{"digest":"${DIGEST}","release":"${TAG}","status":"active"}]
-  JSON
-    jq . test-manifest.json && echo "written"
-  else
-    echo "stopping: DIGEST is not sha256:<64-hex>, nothing written"
-    printf '%s' "$DIGEST" | cat -A | head -3
-  fi
+  # Paste the digest printed in 2.1 and your own tag. Both are quoted literals, so the
+  # shell substitutes nothing — what you type is exactly what lands in the file.
+  printf '[{"digest":"%s","release":"%s","status":"active"}]\n' \
+    'sha256:<paste the digest from 2.1>' '<paste your tag>' > test-manifest.json
+
+  # Same check Terraform makes at plan time, run here where the message names the file.
+  jq -e '.[0].digest | test("^sha256:[0-9a-f]{64}$")' test-manifest.json >/dev/null \
+    && echo "manifest OK" || { echo "not sha256:<64-hex>:"; cat test-manifest.json; }
   ```
 
   Then set `manifest_path = "./test-manifest.json"` in that module's tfvars — without it the
