@@ -707,12 +707,11 @@ cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"
 terraform init
 terraform apply -var-file=terraform.tfvars
 
-# Extract what the launcher (Section 4) and the client (Section 5) need:
+# Write the ADC file the launcher mounts, and print the one output you copy by hand.
+# The audience and the two SA emails are read straight from `terraform output` in 4.1,
+# so there is nothing to write down here.
 terraform output -raw external_account_credential_config > wif-credconfig.json
-terraform output -raw provider_audience   # -> WIF_AUDIENCE
-terraform output -raw base_sa_email       # -> BASE_SA_EMAIL
-terraform output -raw runner_sa_email     # -> RUNNER_SA_EMAIL
-terraform output -json per_role_sa_emails # -> the 5 launcher SA_* values
+terraform output -json per_role_sa_emails   # -> the 5 launcher SA_* values (4.1)
 ```
 
 ### 3.2 Outputs
