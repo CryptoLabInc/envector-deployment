@@ -937,7 +937,9 @@ helm upgrade --install envector ./helm \
   --set shaper.image.repository="${AR_BASE}/envector-shaper" --set shaper.image.tag="$IMAGE_TAG" \
   --set kms.image.repository="${AR_BASE}/envector-kms" --set kms.image.tag="$IMAGE_TAG"
 
-kubectl -n "$K8S_NAMESPACE" get pods -w      # wait for all Running/Ready
+# Blocks until every pod is Ready, then exits — unlike `get pods -w`, which never
+# returns and leaves you guessing whether the rollout finished.
+kubectl -n "$K8S_NAMESPACE" wait --for=condition=ready pod --all --timeout=5m
 kubectl -n "$K8S_NAMESPACE" logs -l component=kms --tail=50
 ```
 
