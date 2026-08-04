@@ -142,29 +142,58 @@ CryptoKeyVersion**, and after rotations envelopes may still reference older vers
 reseals only the touched key). To make *every* envelope undecryptable you must enumerate and
 disable/destroy **every enabled version**, not just the primary/latest.
 
-### Scope / status
+### Scope
 
-This guide targets the enVector GCP-native KMS backend. The full path documented here is
-**static-validated** (Terraform plan/apply acceptance, script lint) and has been
-**validated end-to-end** (see
-the attested Confidential Space e2e runbook;
-SDK insert/search/rotate/suspend/destroy all pass, self-match score ~0.99998). A real
-**production apply is the operator's responsibility** — "Terraform accepted the config"
-proves GCP accepts it, not that a specific fleet's runtime behavior is correct. Re-run the
-verification steps in your own project.
+This guide covers the enVector GCP-native KMS backend: Cloud KMS (CMEK) as the KEK, Secret
+Manager as the KeyStore, and an attested Confidential Space CVM as the only holder of
+plaintext `sk`.
 
-Deployment topology used throughout (this guide's external-TEE model): an attested
-Confidential Space CVM runs `kms-tee` (the only holder of `sk`); a **GKE cluster in the same
-VPC** runs the 6-service MSA stack plus the `envector-kms` control plane (which holds no GCP
-credentials) as pods, wired to the CVM's plaintext `:50062`; the SDK client drives the
-endpoint `:50050` and the control-plane gRPC. GKE nodes are already in-VPC, so there is no
-bastion or stack VM in this path — the operator runs `helm`/`kubectl` from their own
-machine. The e2e validation linked above was recorded on the compose topology (Appendix A);
-the GKE path deploys the same images and the same env contract.
+Deployment topology throughout (the external-TEE model): an attested Confidential Space CVM
+runs `kms-tee` (the only holder of `sk`); a **GKE cluster in the same VPC** runs the
+6-service MSA stack plus the `envector-kms` control plane (which holds no GCP credentials) as
+pods, wired to the CVM's plaintext `:50062`; the SDK client drives the endpoint `:50050` and
+the control-plane gRPC. GKE nodes are already in-VPC, so there is no bastion or stack VM —
+you run `helm`/`kubectl` from your own machine.
+
+**A production apply is your responsibility.** That Terraform accepts the config proves GCP
+accepts it, not that a particular fleet behaves correctly at runtime. Run Section 5 in your
+own project, and read the `⚠️ Verify` callouts — each one marks something this guide could
+not establish on your behalf.
+
+> **Not yet exercised.** Sections 1, 2, 4 and 5 have been run end to end against a live
+> project on the GKE path. Section 3's single-root apply has only been checked with
+> `terraform plan` (39 resources, no cycle); it has not been applied. Treat the first
+> `kms-root` apply as the step most likely to surprise you.
 
 ---
 
 ## 1. Prerequisites
+
+Install these before starting. The last column says where each one is first needed, so you can
+install as you go — but `gcloud` is required from 1.1 onward, and `kubectl` plus its GKE auth
+plugin from 1.5.
+
+| Tool | Install | First needed |
+|---|---|---|
+| `gcloud` (Google Cloud CLI) | [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) | 1.1 |
+| `kubectl` | [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/) — or `gcloud components install kubectl` | 1.5 |
+| `gke-gcloud-auth-plugin` | [cluster-access-for-kubectl#install_plugin](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl#install_plugin) | 1.5 |
+| `terraform` | [developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install) | 3.1 |
+| `helm` (>= 3.8) | [helm.sh/docs/intro/install](https://helm.sh/docs/intro/install/) | 4.3 |
+| `docker` (with `buildx`) | [docs.docker.com/engine/install](https://docs.docker.com/engine/install/) — `buildx` ships with it | 2.1 |
+| `jq` | [jqlang.github.io/jq/download](https://jqlang.github.io/jq/download/) | 2.2 |
+| `git` | [git-scm.com/downloads](https://git-scm.com/downloads) | to obtain this repository |
+| `openssl` | preinstalled on macOS and most Linux distributions | 4.4 |
+| `python3` + `pip` | [python.org/downloads](https://www.python.org/downloads/) | 5.3 |
+
+No specific versions are pinned beyond `helm >= 3.8` and `kubectl >= 1.26` (which is what
+makes the auth plugin mandatory: without it every `kubectl` call fails even though
+`get-credentials` reported success). `docker` is needed only to publish the `kms-tee`
+image (2.1) and to run the SDK e2e container (5.2), not to run the stack itself.
+
+Two things are easy to miss because they are configuration rather than packages, and both are
+covered in 1.6: the **operator IAM roles** these steps need, and the **Application Default
+Credentials** Terraform authenticates with.
 
 ### 1.0 Example names and shell variables
 
@@ -173,6 +202,14 @@ test-scoped resources carry an `-e2e` suffix so a `terraform destroy` / cleanup 
 collide with the production defaults (GCP soft-deletes SAs ~30 days and custom roles
 ~7 days). Names marked "MUST match" have to be identical across the two Terraform modules
 and the CVM launcher, or attestation federation fails closed.
+
+> ⚠️ **On a shared project, do not keep the example names.** `envector-kms`, `es2-images`
+> and `envector-kms-vpc` are the module defaults, so they are exactly the names a colleague
+> already used. `gcloud` then reports "already exists" and you silently continue against
+> someone else's keyring, image repository or VPC — and a later `terraform destroy` takes
+> their resources with it. Give every name a suffix that is yours alone. Note that GCP
+> keyrings **cannot be deleted**, so a throwaway keyring name is permanent clutter: pick one
+> you are willing to keep.
 
 ```bash
 # Example values — replace with your org's project / region / names.
@@ -422,30 +459,6 @@ attested Confidential Space VM launched in Section 4.1.
   gcloud auth application-default login   # add --no-launch-browser on a headless host
   gcloud auth application-default set-quota-project "$PROJECT_ID"
   ```
-- **Tools:** `gcloud`, `terraform`, `kubectl`, `gke-gcloud-auth-plugin`, `helm` (>= 3.8),
-  `docker` + `buildx`, `jq`, `git`, `openssl`, and `python3`. No specific version pins are
-  required; use current stable releases. `docker` is needed only to republish the `kms-tee`
-  image (Section 2.1) and to run the SDK e2e container (5.2) — not to run the stack.
-- **`gke-gcloud-auth-plugin` is not optional.** kubectl >= 1.26 dropped the in-tree GCP auth
-  provider, so without it every `kubectl` call fails with `executable gke-gcloud-auth-plugin
-  not found` even though `get-credentials` reported success. Install it with
-  `gcloud components install gke-gcloud-auth-plugin`, or
-  `sudo apt-get install google-cloud-cli-gke-gcloud-auth-plugin` on a Debian/Ubuntu package
-  install. A **snap** gcloud has its component manager disabled; extract the binary from the
-  deb and put it on `PATH` instead:
-
-  ```bash
-  # Resolve the newest plugin .deb in the Cloud SDK apt repo and keep only the binary —
-  # no root, no apt source, and no second gcloud installation.
-  PKG="$(curl -s https://packages.cloud.google.com/apt/dists/cloud-sdk/main/binary-amd64/Packages \
-    | awk '/^Package: google-cloud-cli-gke-gcloud-auth-plugin$/{f=1} f&&/^Filename: /{print $2} /^$/{f=0}' \
-    | sort -V | tail -1)"
-  curl -sfLO "https://packages.cloud.google.com/apt/$PKG"
-  dpkg-deb -x "$(basename "$PKG")" plugin-pkg
-  install -m755 plugin-pkg/usr/lib/google-cloud-sdk/bin/gke-gcloud-auth-plugin ~/.local/bin/
-
-  gke-gcloud-auth-plugin --version   # ~/.local/bin must be on PATH
-  ```
 - **Confidential Space capacity** in the target zone: SEV needs an `n2d`-family machine;
   TDX needs a `c3`-family machine.
 
@@ -473,13 +486,38 @@ The chart's defaults (`cryptolabinc/envector-*`) are a **private** Docker Hub or
 leaving them in place gives every pod `ImagePullBackOff` unless the cluster holds
 credentials for it. Pick one before 4.3:
 
-- **Your own registry** — retag and push the release images somewhere the cluster can pull,
-  then point `*.image.repository` / `.tag` at it. Reusing the Artifact Registry repo from
-  1.3 keeps everything in one place; the GKE node service account then needs
-  `roles/artifactregistry.reader` on that repo.
+- **Your own registry** — push the images to a registry the cluster can pull, then point
+  `*.image.repository` / `.tag` at that copy (below). The GKE node service account needs
+  `roles/artifactregistry.reader` on the repo.
 - **The private defaults** — create a pull secret and set `imagePullSecrets: [<name>]`:
   `kubectl -n "$K8S_NAMESPACE" create secret docker-registry <name>
   --docker-server=https://index.docker.io/v1/ --docker-username=<user> --docker-password=<token>`
+
+#### Pushing images you already have locally
+
+Images built or loaded on your machine are invisible to GKE — the nodes pull from a registry,
+never from your Docker daemon. Copy them into the Artifact Registry repo from 1.3:
+
+```bash
+# The tag you built with. It ends up in the chart values (4.3), so keep it meaningful —
+# a git revision beats "latest", which silently moves under you.
+export IMAGE_TAG=<your build tag>
+AR_BASE="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}"
+
+# Once per machine: gcloud auth alone does NOT authenticate `docker push`.
+gcloud auth configure-docker "${AR_LOCATION}-docker.pkg.dev"
+
+for svc in endpoint backend orchestrator compute shaper kms; do
+  docker tag  "envector-${svc}:${IMAGE_TAG}" "${AR_BASE}/envector-${svc}:${IMAGE_TAG}"
+  docker push "${AR_BASE}/envector-${svc}:${IMAGE_TAG}"
+done
+
+gcloud artifacts docker images list "$AR_BASE" --include-tags \
+  --format='table(package.basename(),tags)'      # six rows expected
+```
+
+`kms-tee` is deliberately absent from that loop — it is pushed in 2.1, where its digest is
+also captured, because attestation pins the digest rather than the tag.
 
 Use the **same release for every component** (including the SDK wheel in Section 5), so
 their gRPC/proto contracts match.
@@ -506,16 +544,22 @@ Artifact Registry the CVM pulls from, then read back its **manifest** digest —
 `sha256:<64-hex>` is the value the allowlist (2.2) and attestation use.
 
 ```bash
-RELEASED_KMS_TEE=<the released kms-tee image ref, e.g. registry/path/envector-kms-tee:tag>
+# Where you are copying FROM. A remote ref if you pull the release
+# (registry/path/envector-kms-tee:1.2.3), or a local image name if you built it yourself
+# (envector-kms-tee:mytag) — in which case skip the pull below, there is nothing to pull.
+RELEASED_KMS_TEE=<source image ref>
 AR_REF="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}/envector-kms-tee"
-TAG=<the kms-tee release tag>
+# Any tag works: attestation pins the digest, the tag is just a handle. Avoid a tag you
+# will later reuse for a different build — the allowlist would keep admitting the old one.
+TAG=<tag to publish under>
 
 # One-time: let docker authenticate to Artifact Registry via gcloud (gcloud auth alone
 # does NOT authenticate `docker push`).
 gcloud auth configure-docker "${AR_LOCATION}-docker.pkg.dev"
 
-# Bring the released image local and retag it into the AR repo the CVM pulls from.
-# (Skip the pull/tag if the release already lives at ${AR_REF}:${TAG}.)
+# Bring the source image local and retag it into the AR repo the CVM pulls from.
+# Skip the pull when RELEASED_KMS_TEE is already a local image, or when the release
+# already lives at ${AR_REF}:${TAG}.
 # Force linux/amd64 — the Confidential Space VM is x86 (n2d/c3); on an ARM workstation an
 # unqualified pull of a multi-platform tag would publish an ARM image the CVM can't start.
 docker pull --platform linux/amd64 "${RELEASED_KMS_TEE}"
@@ -877,12 +921,12 @@ helm upgrade --install envector ./helm \
   --set kms.enabled=true \
   --set kms.tee.mode=external \
   --set kms.tee.addr="${CVM_IP}:50062" \
-  --set endpoint.image.repository="${AR_BASE}/envector-endpoint" --set endpoint.image.tag="$TAG" \
-  --set backend.image.repository="${AR_BASE}/envector-backend" --set backend.image.tag="$TAG" \
-  --set orchestrator.image.repository="${AR_BASE}/envector-orchestrator" --set orchestrator.image.tag="$TAG" \
-  --set compute.image.repository="${AR_BASE}/envector-compute" --set compute.image.tag="$TAG" \
-  --set shaper.image.repository="${AR_BASE}/envector-shaper" --set shaper.image.tag="$TAG" \
-  --set kms.image.repository="${AR_BASE}/envector-kms" --set kms.image.tag="$TAG"
+  --set endpoint.image.repository="${AR_BASE}/envector-endpoint" --set endpoint.image.tag="$IMAGE_TAG" \
+  --set backend.image.repository="${AR_BASE}/envector-backend" --set backend.image.tag="$IMAGE_TAG" \
+  --set orchestrator.image.repository="${AR_BASE}/envector-orchestrator" --set orchestrator.image.tag="$IMAGE_TAG" \
+  --set compute.image.repository="${AR_BASE}/envector-compute" --set compute.image.tag="$IMAGE_TAG" \
+  --set shaper.image.repository="${AR_BASE}/envector-shaper" --set shaper.image.tag="$IMAGE_TAG" \
+  --set kms.image.repository="${AR_BASE}/envector-kms" --set kms.image.tag="$IMAGE_TAG"
 
 kubectl -n "$K8S_NAMESPACE" get pods -w      # wait for all Running/Ready
 kubectl -n "$K8S_NAMESPACE" logs -l component=kms --tail=50
@@ -986,18 +1030,9 @@ by label so they work regardless of the release name:
 ENDPOINT_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=endpoint -o name | head -1)"
 KMS_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=kms -o name | head -1)"
 
-# Log to files so the forwards do not interleave with the e2e output, and keep the PIDs:
-kubectl -n "$K8S_NAMESPACE" port-forward "$ENDPOINT_SVC" 50050:50050 >/tmp/pf-endpoint.log 2>&1 &
-PF_ENDPOINT=$!
-kubectl -n "$K8S_NAMESPACE" port-forward "$KMS_SVC" 50090:50060 >/tmp/pf-kms.log 2>&1 &
-PF_KMS=$!
-
-sleep 2 && ss -ltn | grep -E '50050|50090'   # both must be LISTEN
+kubectl -n "$K8S_NAMESPACE" port-forward "$ENDPOINT_SVC" 50050:50050 &
+kubectl -n "$K8S_NAMESPACE" port-forward "$KMS_SVC" 50090:50060 &
 ```
-
-Both must stay up for the whole of 5.2, and a forward drops when its pod restarts or the
-connection idles out. An e2e that dies mid-run with a connection error is often that, not
-the KMS — check `/tmp/pf-*.log` first. Tear them down with `kill $PF_ENDPOINT $PF_KMS`.
 
 - Endpoint on local `:50050` -> Service `:50050`.
 - Control-plane gRPC on local `:50090` -> Service `:50060`.
@@ -1045,7 +1080,8 @@ DownloadKey(enc+eval) -> TopK(success)`, then `RotateKey`, and for Suspend/Destr
 that correctly errors. On the CVM serial console (per `tee_role`): `generating FHE keys
 (TEE)`, `gcp dek envelope seal completed` (keygen), `gcp dek envelope unseal completed`
 (score-decryptor, TopK), `gcp cmek rotated` + `reseal` (rotate),
-`secret key deactivated`/`destroyed`. Recorded self-match score: ~0.99998.
+`secret key deactivated`/`destroyed`. The self-match score should land near 0.99998 — a
+markedly lower one means the key the index was built under is not the key being searched.
 
 ### 5.3 SDK usage (raw `KMSClient` API)
 
@@ -1062,7 +1098,7 @@ The client verifies the control plane against the CA from 4.4 — `/tmp/kms-root
 the self-signed leaf.
 
 For direct SDK use rather than the bundled script, the client shapes (from
-the Python KMSClient quick guide) are:
+`kms-python-api-quick-guide-ko.md`) are:
 
 ```python
 from pyenvector.kms.client import KMSClient
@@ -1208,7 +1244,7 @@ functional check. It is not the deployment target: it needs an in-VPC host to re
 private CVM's `:50062` (which is the only reason a "stack VM" ever existed), it merges every
 service onto one bridge network, and it defaults KMS auth off. Use Section 4.3 for anything
 real. The recorded end-to-end validation
-
+(`confidential-space-attested-kms-tee-e2e.md`)
 was run on this topology.
 
 Bring up **one** compose project (envector + infra + ca + kms-gcp) that **excludes** the
@@ -1288,7 +1324,7 @@ external-TEE topology. Publish the host ports the client dials
 | Every proxied RPC fails at Section 5 (not at boot) | Control-plane -> TEE mTLS is on while the CVM `:50062` is plaintext. Leave `kms.tee.mtls.enabled=false` (chart default); on compose, clear `ENVECTOR_KMS_TEE_TLS_CLIENT_CERT/KEY/SERVER_CA` + set `ENVECTOR_KMS_TEE_REQUIRE_MTLS=false`. |
 | `terraform apply` fails with `Invalid provider configuration` + `Attempted to load application default credentials ... No credentials loaded` | `gcloud auth login` does not create ADC, which is what the Google provider uses. Run `gcloud auth application-default login` and `... set-quota-project "$PROJECT_ID"` (1.6). |
 | Every enVector pod is `ImagePullBackOff` while MinIO/Postgres run | The chart's default `cryptolabinc/*` images are a private Docker Hub org and the cluster has no credentials for it. Push the images to a registry the cluster can pull and set `*.image.repository`, or add an `imagePullSecrets` entry (1.7). |
-| `kubectl` fails with `executable gke-gcloud-auth-plugin not found` after a successful `get-credentials` | kubectl >= 1.26 removed the in-tree GCP auth provider; the plugin is required. Install it per 1.6 — and note a snap gcloud cannot `gcloud components install`, so extract the binary from the deb. |
+| `kubectl` fails with `executable gke-gcloud-auth-plugin not found` after a successful `get-credentials` | kubectl >= 1.26 removed the in-tree GCP auth provider; the plugin is required. Install it from the link in the Section 1 tool table. On a **snap** gcloud `gcloud components install` is disabled and the apt package pulls in a second gcloud — extract the binary from the `google-cloud-cli-gke-gcloud-auth-plugin` deb onto your `PATH` instead. |
 | A `--num-nodes=1` regional cluster comes up with three nodes | `--region` makes `--num-nodes` per-zone. Add `--node-locations="$ZONE"` at create time, or `gcloud container clusters update "$GKE_CLUSTER" --region="$REGION" --node-locations="$ZONE"` afterwards. |
 | `kms-iam` was applied on its own and its `runner_reader` binding failed | Expected: the runner SA is created by `kms-wif`. Apply `kms-wif` with `per_role_sa_emails` from `kms-iam`'s output, then re-apply `kms-iam` — 1 to add. Do not switch to `kms-root` afterwards; it keeps its own state and would create everything twice. |
 | CVM fails to authenticate and `wif-credconfig.json` is 0 bytes | `>` creates the file even when the `terraform output` before it fails — typically because it ran in a directory whose module was never applied. Re-extract it after the apply (3.1). |
@@ -1329,6 +1365,5 @@ In this repository:
 - [`examples/kms/kms_sdk_msa_e2e.py`](../examples/kms/kms_sdk_msa_e2e.py)
   — the insert/search/rotate/suspend/destroy e2e Section 5 runs.
 
-The KMS design document (components, data flows, security analysis, attestation model) and
-the digest rollout / rollback / break-glass runbooks are internal to enVector engineering.
-Ask your enVector contact if you need them for a security review.
+The KMS design document and the digest rollout / rollback / break-glass runbooks are internal
+to enVector engineering. Ask your enVector contact if you need them for a security review.
