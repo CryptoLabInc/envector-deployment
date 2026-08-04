@@ -24,6 +24,13 @@ set -euo pipefail
 : "${PROJECT_ID:?set PROJECT_ID}"
 : "${ZONE:?set ZONE e.g. asia-northeast3-a}"
 : "${TEE_IMAGE:?set TEE_IMAGE e.g. asia-northeast3-docker.pkg.dev/my-gcp-project/es2-images/envector-kms-tee@sha256:...}"
+# A tag, or an unsubstituted placeholder, launches a CVM that dies on image pull two
+# minutes later — and a TERMINATED instance serves no serial output, so the reason is
+# only reachable through Cloud Logging. Reject it here instead.
+if ! printf '%s' "$TEE_IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
+  echo "TEE_IMAGE must end in @sha256:<64-hex> (the allowlisted digest), got '$TEE_IMAGE'" >&2
+  exit 1
+fi
 # The CVM attaches a MINIMAL runner SA (AR reader + workloadUser + logWriter, no
 # tokenCreator) — NOT the base SA. Attaching the base SA would let a tampered image
 # read it from the metadata server and bypass attestation; see "Security invariants"
