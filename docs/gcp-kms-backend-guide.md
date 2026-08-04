@@ -853,8 +853,11 @@ instance no longer serves serial output — read Cloud Logging instead:
 ```bash
 ID="$(gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT_ID" \
   --format='value(id)')"
-gcloud logging read "resource.type=\"gce_instance\" AND resource.labels.instance_id=\"$ID\"" \
-  --project="$PROJECT_ID" --limit=50 --freshness=1d --format='value(timestamp,textPayload)' | tac
+# The launcher logs as structured entries, so textPayload alone prints blank lines —
+# read jsonPayload.MESSAGE too. logName tells launcher output from kernel/system noise.
+gcloud logging read "resource.labels.instance_id=\"$ID\"" \
+  --project="$PROJECT_ID" --limit=150 --freshness=1d \
+  --format='value(timestamp,logName.basename(),jsonPayload.MESSAGE,textPayload)' | tac
 ```
 
 The launcher's `Launch Spec` line echoes every value it passed, including `ImageRef` — check
