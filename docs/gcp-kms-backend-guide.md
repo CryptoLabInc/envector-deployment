@@ -587,7 +587,7 @@ carries the Confidential Space launch-policy labels
   so the file belongs in `kms-root/` (3.1):
 
   ```bash
-  cd "$(git rev-parse --show-toplevel)/deployment/terraform/gcp/kms-root"   # or kms-wif
+  cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"   # or kms-wif
   cat > test-manifest.json <<JSON
   [{"digest":"${DIGEST}","release":"${TAG}","status":"active"}]
   JSON
@@ -693,7 +693,7 @@ runner_sa_account_id = "ek-tee-runner-e2e"
 ```
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deployment/terraform/gcp/kms-root"
+cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"
 
 # manifest_path resolves from here, so test-manifest.json (2.2) must be in this directory.
 terraform init
@@ -893,7 +893,7 @@ in-cluster TEE. The full value reference is
 [`README-kms.md`](../kubernetes-manifests/helm/README-kms.md).
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/deployment/kubernetes-manifests"
+cd "$(git rev-parse --show-toplevel)/kubernetes-manifests"
 
 # Images the cluster can pull (1.7). Drop these --set flags only if you wired an
 # imagePullSecret for the chart's private defaults instead.
@@ -1177,7 +1177,7 @@ deactivate/destroy the Secret Manager version.
 ### 6.2 Digest rollout (promote a new released image)
 
 Add-before-remove: never remove a digest a running workload still pins. Run these from the
-repo root (`cd "$(git rev-parse --show-toplevel)"`); the `deployment/...` paths are
+repo root (`cd "$(git rev-parse --show-toplevel)"`); the paths below are
 relative to it.
 
 1. Capture the released digest into `NEW` (the script only prints it):
