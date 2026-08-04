@@ -566,13 +566,17 @@ docker pull --platform linux/amd64 "${RELEASED_KMS_TEE}"
 docker tag  "${RELEASED_KMS_TEE}" "${AR_REF}:${TAG}"
 docker push "${AR_REF}:${TAG}"
 
-# Capture the MANIFEST digest (what attestation reports as image_digest):
-docker buildx imagetools inspect "${AR_REF}:${TAG}" --format '{{.Manifest.Digest}}'
-# -> sha256:3f81...c61   (example)
+# Capture the MANIFEST digest (what attestation reports as image_digest) into a variable,
+# so it is never retyped. gcloud is used rather than `docker buildx imagetools inspect
+# --format` because older buildx silently ignores the template and prints its whole
+# human-readable block instead, which then lands in the manifest as multi-line JSON.
+DIGEST="$(gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
+  --format='value(image_summary.digest)')"
 
-# Equivalent via gcloud:
-gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
-  --format='value(image_summary.digest)'
+# Check the shape before anything consumes it. A truncated value, an image ID, or a stray
+# newline all produce a condition no CVM can ever satisfy — and you find out in 4.1.
+printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+  && echo "digest OK: $DIGEST" || { echo "MALFORMED:"; printf '%s' "$DIGEST" | cat -A; }
 ```
 
 Notes: retagging the same image keeps the same digest (only a changed layer produces a new
@@ -591,6 +595,7 @@ carries the Confidential Space launch-policy labels
   cat > test-manifest.json <<JSON
   [{"digest":"${DIGEST}","release":"${TAG}","status":"active"}]
   JSON
+  jq . test-manifest.json          # must parse; a multi-line DIGEST shows up here
   ```
 
   Then set `manifest_path = "./test-manifest.json"` in that module's tfvars — without it the
@@ -1150,8 +1155,8 @@ is genuinely different (rebuild with a changed layer — a `docker tag` retag ke
 digest and is **not** a valid negative test) and is **not** `active` in the manifest.
 
 ```bash
-docker buildx imagetools inspect "${AR_REF}:${TAG}"     --format '{{.Manifest.Digest}}'
-docker buildx imagetools inspect "${AR_REF}:${TAG}-neg" --format '{{.Manifest.Digest}}'  # must differ
+gcloud artifacts docker images describe "${AR_REF}:${TAG}"     --format='value(image_summary.digest)'
+gcloud artifacts docker images describe "${AR_REF}:${TAG}-neg" --format='value(image_summary.digest)'  # must differ
 ```
 
 Expected on the negative CVM's serial console at the first GCP call:
@@ -1331,7 +1336,7 @@ external-TEE topology. Publish the host ports the client dials
 | SDK TLS handshake fails against the port-forward | The control-plane certificate's SAN must cover the name the client dials — `localhost` for a port-forward, the LB/ingress hostname otherwise (4.4). |
 | SDK TLS init fails: helper `docker cp`s CA from a LOCAL `<proj>-envector-kms-tee-1` container that doesn't exist | Pass the CA explicitly via `KMS_INTEGRATION_CACERT` (5.2); on compose, pre-extract `root_ca.crt` from the `<proj>_envector-ca-certs` volume (Appendix A). |
 | First seal -> Cloud KMS `NOT_FOUND` | Keyring not in `global` location. Recreate the keyring in `global` (a CVM cannot be fixed in place). |
-| CVM is `TERMINATED` shortly after launch and never attests; its Cloud Logging shows `trying next host - response was http.StatusNotFound` | `TEE_IMAGE`'s digest does not exist in that Artifact Registry repo — usually the example digest copied verbatim instead of the one captured in 2.1. Compare `docker buildx imagetools inspect "${AR_REF}:${TAG}" --format '{{.Manifest.Digest}}'` against the `ImageRef` in the launcher's `Launch Spec` log line. |
+| CVM is `TERMINATED` shortly after launch and never attests; its Cloud Logging shows `trying next host - response was http.StatusNotFound` | `TEE_IMAGE`'s digest does not exist in that Artifact Registry repo — usually the example digest copied verbatim instead of the one captured in 2.1. Compare `gcloud artifacts docker images describe "${AR_REF}:${TAG}" --format='value(image_summary.digest)'` against the `ImageRef` in the launcher's `Launch Spec` log line. |
 | Federation rejected: `unauthorized_client ... rejected by the attribute condition` | A launch env value does not match a pinned attestation value (digest / project / runner SA / keyring / key / secret_prefix / audience / debug image). Make every launcher value equal the `kms-root` tfvars. |
 | `GetKeyDetails`/`GetKeyStatus` fail; SDK never sees `NotFound`, so the `GenerateKey` fallback never fires | `key-info` role has list-only IAM; it needs `secretAccessor` (payload read via `AccessSecretVersion`) + `secrets.list`. |
 | keygen fails at `ensure_kek` even though the CMEK exists | keygen needs `cloudkms.cryptoKeys.get` (a get-only custom role, not `cloudkms.viewer`); `EnsureKEK` reads the CMEK via `GetCryptoKey`. |
