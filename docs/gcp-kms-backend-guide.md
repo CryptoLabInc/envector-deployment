@@ -1055,6 +1055,8 @@ kubectl -n "$K8S_NAMESPACE" port-forward "$ENDPOINT_SVC" 50050:50050 &
 kubectl -n "$K8S_NAMESPACE" port-forward "$KMS_SVC" 50090:50060 &
 ```
 
+- A forward binds to one pod, not the Service, so anything that replaces a pod — a
+  `helm upgrade`, a rollout, a crash — kills it. Re-run this block afterwards.
 - Endpoint on local `:50050` -> Service `:50050`.
 - Control-plane gRPC on local `:50090` -> Service `:50060`.
 
