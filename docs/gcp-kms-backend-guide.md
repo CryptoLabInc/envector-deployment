@@ -732,14 +732,9 @@ every pinned `submods.container.env` (the five per-role SA emails + project + ke
 + secret_prefix + base SA + WIF audience + `ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE=true` +
 `ENVECTOR_KMS_SECRET_BACKEND=gcp`); plus the attested base SA (no direct SM/KMS roles).
 
-**Security invariants** — the pool is dedicated to the base SA and holds exactly one
-provider; a Terraform `lifecycle precondition` fails the plan if the module's
-`base_pool_providers` map is extended to a second entry. **This is a module-map / code-review
-invariant, not a universal guard:** the precondition only counts that map, so a second
-provider declared as a separate resource or created out of band **bypasses** it. Because the
-base-SA `workloadIdentityUser` grant is pool-wide (`.../workloadIdentityPools/<pool>/*`), any
-such second provider could federate into the same base SA — so enforce single-provider via
-code review plus drift detection / an org policy, not the precondition alone.
+**Security invariants** — the pool is dedicated to the base SA and must hold exactly one
+provider; a plan-time precondition guards the module's own provider map (its limits, and
+how to enforce single-provider beyond it, are in the module README).
 The `pool_id` is immutable (`ForceNew`): if you are upgrading an existing deployment that
 used the old default, set `pool_id` to the existing value or Terraform destroys the pool
 (GCP soft-deletes it ~30 days, breaking federation). Production defaults (from
@@ -759,20 +754,12 @@ This block runs from `terraform/gcp` — `-chdir=kms-root`, the credconfig path 
 the launcher path all resolve from there. `TEE_IMAGE` **must** be pinned by `@sha256` digest
 (the allowlisted one), not a tag.
 
-> **Why the launcher passes config as `tee-env-*` env vars — they are the attested
-> contract.** Confidential Space includes the container's environment in the attestation
-> token (`assertion.submods.container.env[...]`), and the WIF provider's
-> `attribute_condition` (see `kms-wif/main.tf`) pins the exact value of each: the project,
-> the CMEK keyring/key (and metadata key), the five per-role SA emails, the base SA, the
-> WIF audience, `ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE=true`, and
-> `ENVECTOR_KMS_SECRET_BACKEND=gcp`. So the launch config is *measured and pinned*: a
-> tampered launch that repoints `kms-tee` at a different (attacker-owned or weaker) CMEK,
-> a different SA, or a different backend produces an env value that fails the condition —
-> the token is rejected, no SA is minted, and no seal/unseal can happen (fail-closed).
-> This is *why* the CMEK binding is an env var rather than a config file or CLI flag:
-> only `container.env` can be pinned by attestation. Every value below therefore **MUST
-> match** the corresponding Terraform output/tfvar exactly. (These values are resource
-> NAMES and emails, not secrets.)
+> **The launch env is the attested contract.** Confidential Space measures the container's
+> environment into the attestation token, and the WIF provider's `attribute_condition`
+> (3.4) pins the exact value of every `tee-env-*` the launcher emits — a mismatched value
+> fails the condition and no SA is minted (fail-closed). That is why the config is env vars
+> rather than a file or flags: only `container.env` can be pinned by attestation. (These
+> values are resource NAMES and emails, not secrets.)
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/terraform/gcp"   # every path below is relative to here
@@ -1112,12 +1099,6 @@ finally:
 A local, TLS-off form for testing only (not for production):
 `KMSClient(address="localhost:50090", secure=False)`.
 
-> ⚠️ **Verify:** The address above (`:50090`) is the local end of the 5.1 port-forward
-> (`:50090` -> Service `:50060`). A standalone KMS API gateway may
-> expose a different port (some deployments front it on `:50100`). Confirm which
-> port/gateway your deployment actually exposes and set `address` / `--kms-address` to
-> match your published mapping.
-
 ### 5.4 Negative gating check (optional, security proof)
 
 5.1–5.3 only prove the happy path — they pass just as well against an allowlist that admits
@@ -1315,20 +1296,12 @@ external-TEE topology. Publish the host ports the client dials
 | `terraform apply` fails with `Invalid provider configuration` + `Attempted to load application default credentials ... No credentials loaded` | `gcloud auth login` does not create ADC, which is what the Google provider uses. Run `gcloud auth application-default login` and `... set-quota-project "$PROJECT_ID"` (1.6). |
 | Every enVector pod is `ImagePullBackOff` while MinIO/Postgres run | The chart's default `cryptolabinc/*` images are a private Docker Hub org and the cluster has no credentials for it. Push the images to a registry the cluster can pull and set `*.image.repository`, or add an `imagePullSecrets` entry (1.7). |
 | `kubectl` fails with `executable gke-gcloud-auth-plugin not found` after a successful `get-credentials` | kubectl >= 1.26 removed the in-tree GCP auth provider; the plugin is required. Install it from the link in the Section 1 tool table. On a **snap** gcloud `gcloud components install` is disabled and the apt package pulls in a second gcloud — extract the binary from the `google-cloud-cli-gke-gcloud-auth-plugin` deb onto your `PATH` instead. |
-| `kms-iam` was applied on its own and its `runner_reader` binding failed | Expected: the runner SA is created by `kms-wif`. Apply `kms-wif` with `per_role_sa_emails` from `kms-iam`'s output, then re-apply `kms-iam` — 1 to add. Do not switch to `kms-root` afterwards; it keeps its own state and would create everything twice. |
 | SDK TLS handshake fails against the port-forward | The control-plane certificate's SAN must cover the name the client dials — `localhost` for a port-forward, the LB/ingress hostname otherwise (4.4). |
 | SDK TLS init fails: helper `docker cp`s CA from a LOCAL `<proj>-envector-kms-tee-1` container that doesn't exist | Pass the CA explicitly via `KMS_INTEGRATION_CACERT` (5.2); on compose, pre-extract `root_ca.crt` from the `<proj>_envector-ca-certs` volume (Appendix A). |
 | First seal -> Cloud KMS `NOT_FOUND` | Keyring not in `global` location. Recreate the keyring in `global` (a CVM cannot be fixed in place). |
 | CVM is `TERMINATED` shortly after launch and never attests; its Cloud Logging shows `trying next host - response was http.StatusNotFound` | `TEE_IMAGE`'s digest does not exist in that Artifact Registry repo — usually the example digest copied verbatim instead of the one captured in 2.1. Compare `gcloud artifacts docker images describe "${AR_REF}:${TAG}" --format='value(image_summary.digest)'` against the `ImageRef` in the launcher's `Launch Spec` log line. |
 | Federation rejected: `unauthorized_client ... rejected by the attribute condition` | A launch env value does not match a pinned attestation value (digest / project / runner SA / keyring / key / secret_prefix / audience / debug image). Make every launcher value equal the `kms-root` tfvars. |
-| `GetKeyDetails`/`GetKeyStatus` fail; SDK never sees `NotFound`, so the `GenerateKey` fallback never fires | `key-info` role has list-only IAM; it needs `secretAccessor` (payload read via `AccessSecretVersion`) + `secrets.list`. |
-| keygen fails at `ensure_kek` even though the CMEK exists | keygen needs `cloudkms.cryptoKeys.get` (a get-only custom role, not `cloudkms.viewer`); `EnsureKEK` reads the CMEK via `GetCryptoKey`. |
-| rotate fails to promote a new CMEK version | rotate needs `cryptoKeyVersions.create` + `cryptoKeys.update` (or `roles/cloudkms.admin`); `cryptoKeyEncrypterDecrypter` + get is insufficient. |
 | First per-role RPC fails though IAM is correct | IAM Credentials API (`iamcredentials.googleapis.com`) not enabled — impersonation mints tokens through it. |
-| Per-role RPC `PERMISSION_DENIED` on Service Usage (user-ADC base only) | Grant target SAs `roles/serviceusage.serviceUsageConsumer` on the quota project. A workload-identity/attested-SA base does not need this. |
-| SDK `pip install` fails: `... is not a valid wheel filename` | Install the released `pyenvector` wheel that matches your enVector release; do not hard-code the filename. |
-| zsh: `--location` silently dropped from a gcloud command | zsh doesn't word-split; don't pass gcloud flags via an unquoted variable — use literal flags or a bash array. |
-| `check-digest-in-use.sh --assert-absent` falsely reports "safe to deprecate" | `FILTER` matched zero instances (missing label / renamed workload) -> empty live set read as "not in use". Key the filter on what the launcher sets (`labels.workload=kms-tee`). |
 
 ---
 
