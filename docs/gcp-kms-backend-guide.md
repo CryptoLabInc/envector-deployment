@@ -1164,50 +1164,57 @@ deactivate/destroy the Secret Manager version.
 
 ### 6.2 Digest rollout (promote a new released image)
 
-Add-before-remove: never remove a digest a running workload still pins. Run these from the
-repo root (`cd "$(git rev-parse --show-toplevel)"`); the paths below are
-relative to it.
+The allowlist is derived from the manifest, so promoting an image is the same two steps you
+already ran in 2.2 and 3.1: add a row, re-apply. Add before you remove — a digest some CVM
+still runs must stay `active` until nothing pins it.
 
-1. Capture the released digest into `NEW` (the script only prints it):
-   `NEW="$(bash kms-digests/capture-kms-tee-digest.sh "$TAG" "$AR_REF")"`.
-2. Promote (CODEOWNERS-gated PR):
-   `bash kms-digests/promote-digest.sh "$NEW" "$TAG"`;
-   `bash kms-digests/lint_test.sh`. Merge after security review.
-3. Gated apply: `cd terraform/gcp/kms-root && terraform plan && terraform apply`
-   (the plan must change **only** the provider `attribute_condition`, adding `NEW`).
-4. Roll workloads onto `@${NEW}` (`NEW` already carries the `sha256:` prefix).
-5. Confirm in use:
-   `gcp-confidential-space/check-digest-in-use.sh --project "$PROJECT_ID"
-   --filter "$FILTER"` (expect `NEW` present, `OLD` absent). `FILTER` must match the
-   launcher's labels/tags/name, e.g. `'labels.workload=kms-tee AND status=RUNNING'` (the
-   launcher sets `--labels=workload=kms-tee`); a filter that matches zero instances reads as
-   "not in use" and falsely reports "safe to deprecate".
-6. Deprecate `OLD` (guarded `jq` flip to `status:"deprecated"`), PR + review.
-7. Apply the deprecation.
+1. Read the new image's manifest digest, as in 2.1:
+   `gcloud artifacts docker images describe "${AR_REF}:${TAG}" --format='value(image_summary.digest)'`
+2. Append `{"digest": "<new>", "release": "<tag>", "status": "active"}` to the manifest
+   `kms-wif` reads. Put that edit through review: this file is what admits an image into the
+   TEE, so it deserves the same scrutiny as the IAM around it.
+3. Apply from `kms-root`. The plan must change **only** the provider `attribute_condition`,
+   adding the new digest. Anything else in the plan means you changed more than the manifest.
+4. Roll the CVMs onto `@<new digest>` — 4.1 again with the new `TEE_IMAGE`.
+5. Confirm nothing still runs the old digest *before* touching its row:
+   [`check-digest-in-use.sh`](../gcp-confidential-space/check-digest-in-use.sh)
+   `--project "$PROJECT_ID" --filter "$FILTER"`. `FILTER` must match what the launcher sets
+   (`--labels=workload=kms-tee`), e.g. `'labels.workload=kms-tee AND status=RUNNING'` — a
+   filter matching zero instances reads as "not in use" and falsely reports "safe to
+   deprecate".
+6. Flip the old row to `"status": "deprecated"` and apply again.
+
+Rows are `{digest, release, status}` with `status in {active, deprecated, revoked}`. Both
+`deprecated` and `revoked` are excluded from the derived allowlist; keeping the row instead
+of deleting it is what preserves the audit trail.
 
 ### 6.3 Digest rollback (operational revert — not a security revoke)
 
-- **Case A** (a good `OLD` deprecated too soon): `git revert` the deprecate PR, or guarded
-  `jq` flip `OLD` back to `active`; PR + review; `terraform plan && apply`.
-- **Case B** (a bad `NEW` promoted): ensure no workload rolled onto `NEW`, `git revert` the
-  promote PR (or guarded `jq` drop of the row); PR + review; apply.
-- If `NEW` is *compromised* (not merely bad), use break-glass (`revoked`) — do **not**
-  delete.
+- **A good digest was deprecated too soon:** flip it back to `active`, review, apply.
+- **A bad digest was promoted:** confirm no workload rolled onto it, then drop the row (or
+  revert the commit that added it), review, apply.
+- If the digest is *compromised* rather than merely bad, revoke it (6.4) — do **not** delete
+  the row.
 
 ### 6.4 Break-glass (revoke a compromised digest)
 
-- Guarded `jq` flip `BAD` to `status:"revoked"` (**keep** the entry for audit; `revoked` is
-  excluded from every derived allowlist regardless of `include_deprecated`); expedited
-  CODEOWNERS-gated PR; `terraform plan && apply` (drops `BAD`). Publish a security advisory
-  to self-hosted deployers (enVector cannot edit their allowlist).
-- Optional managed-only emergency path:
-  ```bash
-  gcloud iam workload-identity-pools providers update-oidc "$PROVIDER_ID" \
-    --project="$PROJECT_ID" --location=global \
-    --workload-identity-pool="$POOL_ID" \
-    --attribute-condition='<condition minus BAD>'
-  ```
-  Reconcile back to Terraform immediately, and audit every step.
+Flip the bad row to `"status": "revoked"` and apply. **Keep** the entry: `revoked` is
+excluded from every derived allowlist regardless of `include_deprecated`, and the row is the
+audit record. Self-hosted deployers maintain their own manifest copy, so a revocation
+reaches them only through a security advisory — enVector cannot edit their allowlist.
+
+If waiting for an apply is not acceptable, the condition can be edited in place and
+reconciled back to Terraform immediately afterwards:
+
+```bash
+gcloud iam workload-identity-pools providers update-oidc "$PROVIDER_ID" \
+  --project="$PROJECT_ID" --location=global \
+  --workload-identity-pool="$POOL_ID" \
+  --attribute-condition='<condition minus the revoked digest>'
+```
+
+Terraform is the source of truth for this condition, so anything applied this way is drift
+until the manifest change lands.
 
 ### 6.5 Teardown
 
