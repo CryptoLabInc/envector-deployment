@@ -187,47 +187,53 @@ Credentials** Terraform authenticates with.
 
 ### 1.0 Example names and shell variables
 
-The guide uses these example names throughout. Replace them with your org's values. The
-test-scoped resources carry an `-e2e` suffix so a `terraform destroy` / cleanup does not
-collide with the production defaults (GCP soft-deletes SAs ~30 days and custom roles
-~7 days). Names marked "MUST match" have to be identical across the two Terraform modules
-and the CVM launcher, or attestation federation fails closed.
+Every resource this guide creates carries `NAME_SUFFIX`, so a rerun — or a colleague's
+parallel deployment on the same project — only needs a fresh suffix, not per-name edits.
+Names marked "MUST match" have to be identical across the two Terraform modules and the CVM
+launcher, or attestation federation fails closed; 3.1 and 4.1 derive them from these same
+exports, which is what guarantees that. Re-run this block in any new shell — every later
+section reads these variables.
 
-> ⚠️ **On a shared project, do not keep the example names.** `envector-kms`, `es2-images`
-> and `envector-kms-vpc` are the module defaults, so they are exactly the names a colleague
-> already used. `gcloud` then reports "already exists" and you silently continue against
-> someone else's keyring, image repository or VPC — and a later `terraform destroy` takes
-> their resources with it. Give every name a suffix that is yours alone. Note that GCP
-> keyrings **cannot be deleted**, so a throwaway keyring name is permanent clutter: pick one
-> you are willing to keep.
+> ⚠️ **On a shared project, never run without a suffix that is yours alone.** The module
+> defaults (`envector-kms`, `es2-images`, `envector-kms-vpc`) are exactly the names a
+> colleague already used: `gcloud` reports "already exists", you silently continue against
+> their keyring, image repository or VPC — and your later teardown takes their resources
+> with it. And use a **fresh** suffix per rerun: GCP soft-deletes SAs (~30 days) and custom
+> roles (~7 days), so a torn-down suffix's names stay reserved. The one permanent cost is
+> the keyring — GCP keyrings **cannot be deleted**, so each suffix leaves its keyring behind.
 
 ```bash
-# Example values — replace with your org's project / region / names.
+# Example values — replace with your org's project / region.
 export PROJECT_ID=my-gcp-project
 export REGION=asia-northeast3
 export ZONE=asia-northeast3-a
+
+# One suffix for everything this run creates. Lowercase letters and digits only (it lands
+# in custom-role ids, which reject hyphens), at most 11 characters (SA account-ids cap
+# at 30). Everything below derives from it.
+export NAME_SUFFIX=alice1
 
 # The KMS_* values below are Cloud KMS resource NAMES (identifiers), NOT secret
 # values — the key material never leaves Cloud KMS. (The backend also needs an
 # enVector license token, but that is supplied from a token.jwt FILE mounted into
 # the container; ENVECTOR_LICENSE_TOKEN is just the in-container path to it, not
 # the token value — see Section 4.3. Do not put the token value in env/config.)
-export KMS_KEYRING=envector-kms           # CMEK keyring name — MUST be location=global
-export KMS_KEY=envector-kek               # CMEK name; wraps the per-key DEK (ENCRYPT_DECRYPT)
-export KMS_KEY_METADATA=envector-meta-kek # optional per-type metadata CMEK name (same keyring)
+export KMS_KEYRING="envector-kms-${NAME_SUFFIX}"           # CMEK keyring name — MUST be location=global
+export KMS_KEY="envector-kek-${NAME_SUFFIX}"               # CMEK name; wraps the per-key DEK (ENCRYPT_DECRYPT)
+export KMS_KEY_METADATA="envector-meta-kek-${NAME_SUFFIX}" # optional per-type metadata CMEK name (same keyring)
 
 export AR_LOCATION=asia-northeast3
-export AR_REPOSITORY=es2-images           # Artifact Registry (Docker) repo (module default)
+export AR_REPOSITORY="es2-images-${NAME_SUFFIX}"           # Artifact Registry (Docker) repo
 
-export SECRET_PREFIX=envector-kms-e2e     # MUST match kms-iam + kms-wif + launcher
-export NETWORK=envector-kms-vpc
-export SUBNET=envector-kms-subnet
+export SECRET_PREFIX="envector-kms-${NAME_SUFFIX}"         # MUST match kms-iam + kms-wif + launcher
+export NETWORK="envector-kms-vpc-${NAME_SUFFIX}"
+export SUBNET="envector-kms-subnet-${NAME_SUFFIX}"
 export SUBNET_RANGE=10.10.0.0/24
 
-export GKE_CLUSTER=envector-gke           # runs the MSA stack + the KMS control plane
+export GKE_CLUSTER="envector-gke-${NAME_SUFFIX}"           # runs the MSA stack + the KMS control plane
 export GKE_POD_RANGE=10.20.0.0/16         # subnet secondary range for pods — the :50062 firewall source (4.2)
 export GKE_SVC_RANGE=10.30.0.0/20         # subnet secondary range for Services
-export K8S_NAMESPACE=envector
+export K8S_NAMESPACE="envector-${NAME_SUFFIX}"
 ```
 
 ### 1.1 Enable the required GCP APIs
@@ -296,9 +302,10 @@ gcloud kms keys create "$KMS_KEY_METADATA" \
 
 ### 1.3 Create the Artifact Registry (Docker) repo
 
-The modules and launcher default to `ar_location = asia-northeast3`,
-`ar_repository = es2-images`, so image refs read
-`asia-northeast3-docker.pkg.dev/<project>/es2-images/envector-kms-tee`.
+Image refs read `${AR_LOCATION}-docker.pkg.dev/<project>/${AR_REPOSITORY}/envector-kms-tee`.
+The suffixed repo name differs from the module default (`es2-images`), which is why 3.1's
+tfvars passes `ar_location` / `ar_repository` explicitly — the runner SA's image-pull
+reader binding must land on this repo.
 
 ```bash
 gcloud artifacts repositories create "$AR_REPOSITORY" \
@@ -335,12 +342,12 @@ gcloud compute networks subnets create "$SUBNET" \
   --project="$PROJECT_ID"
 
 # Cloud Router + NAT for egress from a --no-address CVM.
-gcloud compute routers create envector-kms-router \
+gcloud compute routers create "envector-kms-router-${NAME_SUFFIX}" \
   --network="$NETWORK" --region="$REGION" \
   --project="$PROJECT_ID"
 
-gcloud compute routers nats create envector-kms-nat \
-  --router=envector-kms-router --region="$REGION" \
+gcloud compute routers nats create "envector-kms-nat-${NAME_SUFFIX}" \
+  --router="envector-kms-router-${NAME_SUFFIX}" --region="$REGION" \
   --nat-all-subnet-ip-ranges --auto-allocate-nat-external-ips \
   --project="$PROJECT_ID"
 ```
@@ -623,60 +630,58 @@ module "kms_wif" { source = "../kms-wif"
 
 Do not add a module-wide `depends_on` between them; that is a cycle.
 
-```hcl
-# terraform/gcp/kms-root/terraform.tfvars
-project_id    = "my-gcp-project"
-kms_keyring   = "envector-kms"          # existing global CMEK keyring NAME (not the key)
-kms_key       = "envector-kek"          # existing CMEK key
-# kms_key_metadata = "envector-meta-kek"  # OPTIONAL per-type split; must match the launcher
-secret_prefix = "envector-kms-e2e"      # MUST match the launcher
-
-# The allowlist is derived from this manifest's `active` entries (NOT a tfvar). The path is
-# resolved from the directory you run terraform in, so the file from 2.2 belongs here.
-# THROWAWAY e2e ONLY. For production, OMIT this line so the module reads the committed
-# manifest that the GitOps promote (2.2) updates.
-manifest_path = "./test-manifest.json"
-
-# Per-role SA account-ids (local parts). Namespaced for clean teardown.
-keygen_sa_account_id          = "ek-keygen-e2e"
-rotate_sa_account_id          = "ek-rotate-e2e"
-key_info_sa_account_id        = "ek-key-info-e2e"
-score_decryptor_sa_account_id = "ek-score-decryptor-e2e"
-metadata_cipher_sa_account_id = "ek-metacipher-e2e"
-
-# Artifact Registry the runner SA gets reader on — MUST equal AR_LOCATION / AR_REPOSITORY
-# used to build AR_REF (§1/§2). Defaults are asia-northeast3 / es2-images; set them here if
-# you customized either, else the CVM cannot pull TEE_IMAGE from your repo.
-ar_location   = "asia-northeast3"
-ar_repository = "es2-images"
-
-# Unique suffix so soft-deleted custom roles (7-day) and a shared-project production
-# module don't collide on re-run. REQUIRED for throwaway; pick your own per run.
-custom_role_id_suffix = "_e2e"
-
-# Test-scoped pool + SAs for clean teardown:
-pool_id              = "envector-kms-tee-e2e"
-provider_id          = "confidential-space"
-base_sa_account_id   = "ek-tee-attested-e2e"
-runner_sa_account_id = "ek-tee-runner-e2e"
-```
-
 ```bash
 cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"
+: "${NAME_SUFFIX:?run the 1.0 exports first}"   # unset exports would write a broken tfvars
 
-# manifest_path resolves from here, so test-manifest.json (2.2) must be in this directory.
+# Generated from the 1.0 exports, so every name carries NAME_SUFFIX and equals what the
+# 4.1 launcher will pin. All values are resource NAMES and account-ids, not secrets.
+cat > terraform.tfvars <<EOF
+project_id    = "${PROJECT_ID}"
+kms_keyring   = "${KMS_KEYRING}"      # existing global CMEK keyring NAME (not the key)
+kms_key       = "${KMS_KEY}"          # existing CMEK key
+# kms_key_metadata = "${KMS_KEY_METADATA}"  # OPTIONAL per-type split; must match the launcher
+secret_prefix = "${SECRET_PREFIX}"    # MUST match the launcher
+
+# The allowlist is derived from this manifest's active entries (NOT a tfvar). The path is
+# resolved from the directory you run terraform in, so the file from 2.2 belongs here.
+# THROWAWAY e2e ONLY. For production, OMIT this line so the module reads the committed
+# manifest.
+manifest_path = "./test-manifest.json"
+
+# Per-role SA account-ids (local parts).
+keygen_sa_account_id          = "ek-keygen-${NAME_SUFFIX}"
+rotate_sa_account_id          = "ek-rotate-${NAME_SUFFIX}"
+key_info_sa_account_id        = "ek-key-info-${NAME_SUFFIX}"
+score_decryptor_sa_account_id = "ek-score-decryptor-${NAME_SUFFIX}"
+metadata_cipher_sa_account_id = "ek-metacipher-${NAME_SUFFIX}"
+
+# Artifact Registry the runner SA gets image-pull reader on — the repo from 1.3.
+ar_location   = "${AR_LOCATION}"
+ar_repository = "${AR_REPOSITORY}"
+
+# Suffix for the 6 custom role ids (why NAME_SUFFIX must avoid hyphens).
+custom_role_id_suffix = "_${NAME_SUFFIX}"
+
+pool_id              = "envector-kms-tee-${NAME_SUFFIX}"
+provider_id          = "confidential-space"
+base_sa_account_id   = "ek-tee-attested-${NAME_SUFFIX}"
+runner_sa_account_id = "ek-tee-runner-${NAME_SUFFIX}"
+EOF
+
 terraform init
 terraform apply -var-file=terraform.tfvars
 
-# Write the ADC file the launcher mounts, and print the one output you copy by hand.
+# Write the ADC file the launcher mounts.
 terraform output -raw external_account_credential_config > wif-credconfig.json
-terraform output -json per_role_sa_emails   # -> the 5 launcher SA_* values (4.1)
 ```
 
 ### 3.2 Outputs
 
 `per_role_sa_emails` is an object `{keygen, rotate, key_info, score_decryptor,
-metadata_cipher}`; copy it verbatim into the launcher `SA_*` env (Section 4).
+metadata_cipher}`. 4.1 derives the same five emails from the 1.0 exports, so nothing is
+copied by hand; `terraform output -json per_role_sa_emails` is the cross-check if
+federation is ever rejected.
 
 - `external_account_credential_config` — the ready-to-use `external_account` ADC JSON.
   Consume it **unmodified** (do not edit the embedded token path). You **must** use `-raw`,
@@ -772,27 +777,29 @@ the launcher path all resolve from there. `TEE_IMAGE` **must** be pinned by `@sh
 ```bash
 cd "$(git rev-parse --show-toplevel)/terraform/gcp"   # every path below is relative to here
 
-export PROJECT_ID=my-gcp-project ZONE=asia-northeast3-a INSTANCE=envector-kms-tee-cs
+# PROJECT_ID / ZONE / NETWORK / SUBNET come from the 1.0 exports — the launcher reads them.
+export INSTANCE="envector-kms-tee-cs-${NAME_SUFFIX}"
 export MACHINE_TYPE=n2d-standard-2                 # n2d -> SEV; c3-* -> TDX
 # The digest MUST be the one from 2.1 that you wrote into the manifest — a stale or
 # copy-pasted digest 404s on pull and the CVM terminates before it ever attests.
 export TEE_IMAGE="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}/envector-kms-tee@<sha256-from-2.1>"
 export RUNNER_SA_EMAIL="$(terraform -chdir=kms-root output -raw runner_sa_email)"
 export BASE_SA_EMAIL="$(terraform -chdir=kms-root output -raw base_sa_email)"
-export NETWORK=envector-kms-vpc SUBNET=envector-kms-subnet   # dedicated VPC, NOT default
 export NO_EXTERNAL_IP=true                          # --no-address; needs Private Google Access
 export WIF_CREDCONFIG_FILE="$PWD/kms-root/wif-credconfig.json"   # written by 3.1 in the kms-root dir
 export WIF_AUDIENCE="$(terraform -chdir=kms-root output -raw provider_audience)"
-export ENVECTOR_KMS_GCP_KMS_KEYRING=envector-kms           # keyring NAME (global-location); not the key
-export ENVECTOR_KMS_GCP_KMS_KEY=envector-kek
-# export ENVECTOR_KMS_GCP_KMS_KEY_METADATA=envector-meta-kek  # OPTIONAL per-type split; set ONLY if kms_key_metadata was set in both tfvars (an empty value fails attestation)
-export ENVECTOR_KMS_GCP_SECRET_PREFIX=envector-kms-e2e     # MUST match both tfvars
-# The 5 per-role SA emails (the per_role_sa_emails output from 3.1):
-export SA_KEYGEN=ek-keygen-e2e@my-gcp-project.iam.gserviceaccount.com
-export SA_ROTATE=ek-rotate-e2e@my-gcp-project.iam.gserviceaccount.com
-export SA_KEY_INFO=ek-key-info-e2e@my-gcp-project.iam.gserviceaccount.com
-export SA_SCORE_DECRYPTOR=ek-score-decryptor-e2e@my-gcp-project.iam.gserviceaccount.com
-export SA_METADATA_CIPHER=ek-metacipher-e2e@my-gcp-project.iam.gserviceaccount.com
+# Attested launch env — each value must equal its 3.1 tfvars counterpart; deriving both
+# from the same 1.0 exports is what guarantees that.
+export ENVECTOR_KMS_GCP_KMS_KEYRING="$KMS_KEYRING"
+export ENVECTOR_KMS_GCP_KMS_KEY="$KMS_KEY"
+# export ENVECTOR_KMS_GCP_KMS_KEY_METADATA="$KMS_KEY_METADATA"  # OPTIONAL per-type split; set ONLY if kms_key_metadata was set in the 3.1 tfvars (an empty value fails attestation)
+export ENVECTOR_KMS_GCP_SECRET_PREFIX="$SECRET_PREFIX"
+# The 5 per-role SA emails — same derivation as the 3.1 tfvars account-ids:
+export SA_KEYGEN="ek-keygen-${NAME_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+export SA_ROTATE="ek-rotate-${NAME_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+export SA_KEY_INFO="ek-key-info-${NAME_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+export SA_SCORE_DECRYPTOR="ek-score-decryptor-${NAME_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
+export SA_METADATA_CIPHER="ek-metacipher-${NAME_SUFFIX}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Path is relative to terraform/gcp (this section's working dir):
 bash ../../gcp-confidential-space/launch-kms-tee.sh
@@ -830,7 +837,7 @@ it against what you meant to launch. Then look for:
 ### 4.2 Firewall: allow `:50062` only from the GKE pod range
 
 ```bash
-gcloud compute firewall-rules create allow-kms-tee-from-gke \
+gcloud compute firewall-rules create "allow-kms-tee-from-gke-${NAME_SUFFIX}" \
   --network="$NETWORK" \
   --direction=INGRESS --action=ALLOW --rules=tcp:50062 \
   --target-service-accounts="$RUNNER_SA_EMAIL" \
