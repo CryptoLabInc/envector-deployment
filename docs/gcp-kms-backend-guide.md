@@ -608,18 +608,10 @@ provisions and why the IAM is shaped that way.
 
 ### 3.1 Apply from `kms-root` (one pass)
 
-[`kms-root`](../terraform/gcp/kms-root) passes each module's output into
-the other as a real reference, which gives Terraform both edges. The graph is a DAG, so it
-orders the resources itself:
-
-```hcl
-module "kms_iam" { source = "../kms-iam"
-  runner_sa_email    = module.kms_wif.runner_sa_email }     # edge: wif's SA -> iam's binding
-module "kms_wif" { source = "../kms-wif"
-  per_role_sa_emails = module.kms_iam.per_role_sa_emails }  # edge: iam's SAs -> wif's bindings
-```
-
-Do not add a module-wide `depends_on` between them; that is a cycle.
+[`kms-root`](../terraform/gcp/kms-root) already ships in the repo — there
+is nothing to write except the tfvars below. It passes each module's outputs into the other
+as real references, so Terraform orders the resources itself; how that resolves the cycle
+is in the module's README.
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"
