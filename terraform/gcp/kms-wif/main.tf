@@ -258,10 +258,10 @@ resource "google_iam_workload_identity_pool_provider" "base" {
     # is derived as "any row with status == active", so an out-of-enum typo
     # (e.g. "actve", "Active", "deprecated " with a trailing space) is silently
     # treated as not-active: it either drops an intended-active digest from the
-    # allowlist or slips an invalid lifecycle signal past review. The JSON-schema
-    # lint (lint_test.sh) catches this, but Terraform must not trust the manifest
+    # allowlist or slips an invalid lifecycle signal past review. A schema check
+    # on the manifest catches this, but Terraform must not trust the manifest
     # blindly — assert the enum here so a status typo fails plan/apply even when
-    # the lint was skipped.
+    # no such check was run.
     precondition {
       condition     = alltrue([for d in local._kms_tee_manifest : contains(["active", "deprecated", "revoked"], d.status)])
       error_message = "Every kms-tee manifest row's status must be one of: active, deprecated, revoked. An out-of-enum value (typo, wrong case, or trailing whitespace) is silently treated as not-active and can drop an intended-active digest or admit an invalid lifecycle signal."

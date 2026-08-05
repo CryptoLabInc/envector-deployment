@@ -6,7 +6,8 @@ digest listed here is a released, content-addressed (`@sha256`) kms-tee image;
 the `status` field governs whether that digest is admitted to a live
 attestation allowlist.
 
-Design: [`docs/design/auth/kms-tee-release-digest-pipeline-design-v1.md`](../../docs/design/auth/kms-tee-release-digest-pipeline-design-v1.md).
+The design document behind this pipeline is internal to enVector engineering; ask your
+enVector contact if you need it for a security review.
 
 ## Why this is authoritative
 
@@ -47,8 +48,7 @@ A JSON array of entries, each `{digest, release, status}`:
 
 The seed manifest is an empty array (`[]`): valid but admitting nothing.
 Operators append real digests as they are released. `schema.json` in this
-directory is the machine-checkable contract; `lint_test.sh` validates the
-manifest against it.
+directory is the machine-checkable contract for that shape.
 
 ## Lifecycle: active | deprecated | revoked
 
@@ -104,15 +104,17 @@ policy); describe the reason in words.
 
 ## Validating locally
 
+`schema.json` is the contract; check a manifest against it before applying. Terraform's own
+precondition only checks the digest shape, so a schema-only error (an empty `release`, an
+out-of-enum `status`, an extra field) reaches the allowlist unnoticed:
+
 ```bash
-bash kms-digests/lint_test.sh                # the bundled manifest
-bash kms-digests/lint_test.sh <your-manifest.json>   # a custom file
+jq -e 'type == "array" and all(.[];
+        (.digest | test("^sha256:[0-9a-f]{64}$"))
+        and (.release | type == "string" and length > 0)
+        and (.status | IN("active","deprecated","revoked")))' \
+  kms-digests/kms-tee-released-digests.json && echo "manifest OK"
 ```
 
-With no argument the test validates the bundled manifest against `schema.json`
-(preferring the `jsonschema` package, with a pure-python fallback) and asserts
-that a valid row passes while a malformed digest or an out-of-enum status is
-rejected. A self-hosted deployer who set `var.manifest_path` to a synced copy
-elsewhere should pass THAT path so their file is schema-checked — otherwise the
-lint green-lights the bundled file while their custom file may carry schema-only
-errors (empty `release`, extra fields) that Terraform never catches.
+If you set `var.manifest_path` to a synced copy elsewhere, check **that** file — the bundled
+one being valid says nothing about yours.
