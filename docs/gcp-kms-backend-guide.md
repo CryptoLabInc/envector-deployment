@@ -561,16 +561,17 @@ one for a different build — the allowlist would keep admitting the old one. Th
 `kms-tee` image already carries the Confidential Space launch-policy labels
 (`tee.launch_policy.allow_env_override`, `log_redirect=always`) it needs to be admitted.
 
-### 2.2 Admit the digest (throwaway e2e vs. production GitOps)
+### 2.2 Admit the digest (throwaway e2e vs. self-hosted)
 
 - **Throwaway e2e:** write a test manifest and point `manifest_path` at it. Leave the
   committed manifest alone. `manifest_path` resolves from the directory Terraform runs in,
   so the file belongs in `kms-root/` (3.1):
 
   ```bash
-  cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"   # or kms-wif
+  cd "$(git rev-parse --show-toplevel)/terraform/gcp/kms-root"
 
-  # Paste the digest printed in 2.1 and your own tag. Both are quoted literals, so the
+  # Paste the digest printed in 2.1 and your tag (the 1.7 IMAGE_TAG value). Both are
+  # quoted literals, so the
   # shell substitutes nothing — what you type is exactly what lands in the file.
   printf '[{"digest":"%s","release":"%s","status":"active"}]\n' \
     'sha256:<paste the digest from 2.1>' '<paste your tag>' > test-manifest.json
@@ -1006,7 +1007,7 @@ nothing to install on your machine for this step. `--network host` is what joins
 ```bash
 # Pin the version to your enVector release. For a private or air-gapped distribution,
 # install a wheel from the mounted checkout instead: pip install "/work/<pyenvector-*.whl>"
-SDK_VERSION=<pyenvector version matching your enVector release>
+SDK_VERSION='<pyenvector version matching your enVector release>'
 
 # Mount the repo ROOT (not the current dir) so the example script path resolves,
 # regardless of where you run this from.
@@ -1093,8 +1094,8 @@ A local, TLS-off form for testing only (not for production):
 
 5.1–5.3 only prove the happy path — they pass just as well against an allowlist that admits
 anything. This is the one check that the gate actually closes. Run it when you first stand
-the stack up in a project, and after changing the WIF `attribute_condition` or the manifest
-tooling; it is not a per-deploy step, and it costs a second CVM and a genuine rebuild.
+the stack up in a project, and after changing the WIF `attribute_condition` or how the
+manifest is derived; it is not a per-deploy step, and it costs a second CVM and a genuine rebuild.
 
 Launch a second CVM identical to 4.1 but with a `kms-tee` image whose **manifest digest**
 is genuinely different (rebuild with a changed layer — a `docker tag` retag keeps the same
@@ -1186,7 +1187,8 @@ until the manifest change lands.
 
 Uninstall the release and delete the cluster
 (`helm uninstall envector -n "$K8S_NAMESPACE"`; `gcloud container clusters delete
-"$GKE_CLUSTER" --region="$REGION"`); delete both CVMs; `terraform destroy` from
+"$GKE_CLUSTER" --region="$REGION"`); delete the CVM (and 5.4's negative one, if
+launched); `terraform destroy` from
 `kms-root` (the five per-role SAs with their custom roles + IAM, the AR-reader binding, and
 the pool, provider, base + runner SAs) — Terraform reverses its own order, and using
 `destroy` rather than deleting SAs by hand keeps custom-role / state remnants from colliding
