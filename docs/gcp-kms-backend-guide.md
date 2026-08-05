@@ -494,7 +494,7 @@ never from your Docker daemon. Copy them into the Artifact Registry repo from 1.
 ```bash
 # The tag you built with. It ends up in the chart values (4.3), so keep it meaningful —
 # a git revision beats "latest", which silently moves under you.
-export IMAGE_TAG=<your build tag>
+export IMAGE_TAG='<your build tag>'
 AR_BASE="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}"
 
 # Once per machine: gcloud auth alone does NOT authenticate `docker push`.
@@ -532,43 +532,33 @@ repo from 1.3.
 
 ### 2.1 Publish the `kms-tee` image to Artifact Registry, capture its manifest digest
 
-Push the released `kms-tee` image (from your enVector release / Section 1.7) into the
-Artifact Registry the CVM pulls from, then read back its **manifest** digest — that
-`sha256:<64-hex>` is the value the allowlist (2.2) and attestation use.
+Push the local `kms-tee` image (`envector-kms-tee:${IMAGE_TAG}`, same release as the 1.7
+stack images) into the Artifact Registry the CVM pulls from, then read back its
+**manifest** digest — that `sha256:<64-hex>` is the value the allowlist (2.2) and
+attestation use.
 
 ```bash
-# Where you are copying FROM. A remote ref if you pull the release
-# (registry/path/envector-kms-tee:1.2.3), or a local image name if you built it yourself
-# (envector-kms-tee:mytag) — in which case skip the pull below, there is nothing to pull.
-RELEASED_KMS_TEE=<source image ref>
 AR_REF="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPOSITORY}/envector-kms-tee"
-# Any tag works: attestation pins the digest, the tag is just a handle. Avoid a tag you
-# will later reuse for a different build — the allowlist would keep admitting the old one.
-TAG=<tag to publish under>
 
 # One-time: let docker authenticate to Artifact Registry via gcloud (gcloud auth alone
 # does NOT authenticate `docker push`).
 gcloud auth configure-docker "${AR_LOCATION}-docker.pkg.dev"
 
-# Bring the source image local and retag it into the AR repo the CVM pulls from.
-# Skip the pull when RELEASED_KMS_TEE is already a local image, or when the release
-# already lives at ${AR_REF}:${TAG}.
-# Force linux/amd64 — the Confidential Space VM is x86 (n2d/c3); on an ARM workstation an
-# unqualified pull of a multi-platform tag would publish an ARM image the CVM can't start.
-docker pull --platform linux/amd64 "${RELEASED_KMS_TEE}"
-docker tag  "${RELEASED_KMS_TEE}" "${AR_REF}:${TAG}"
-docker push "${AR_REF}:${TAG}"
+docker tag  "envector-kms-tee:${IMAGE_TAG}" "${AR_REF}:${IMAGE_TAG}"
+docker push "${AR_REF}:${IMAGE_TAG}"
 
 # Print the MANIFEST digest — the value attestation reports as image_digest.
 # Copy it; 2.2 pastes it in literally.
-gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
+gcloud artifacts docker images describe "${AR_REF}:${IMAGE_TAG}" \
   --format='value(image_summary.digest)'
 # -> sha256:<64 hex chars>
 ```
 
-Notes: retagging the same image keeps the same digest (only a changed layer produces a new
-one), so the digest identifies the exact image bytes. The released `kms-tee` image already
-carries the Confidential Space launch-policy labels
+Notes: the image must be **linux/amd64** — the Confidential Space VM is x86 (n2d/c3).
+Retagging the same image keeps the same digest (only a changed layer produces a new one),
+so the digest identifies the exact image bytes; the tag is just a handle, but avoid reusing
+one for a different build — the allowlist would keep admitting the old one. The released
+`kms-tee` image already carries the Confidential Space launch-policy labels
 (`tee.launch_policy.allow_env_override`, `log_redirect=always`) it needs to be admitted.
 
 ### 2.2 Admit the digest (throwaway e2e vs. production GitOps)
@@ -1111,8 +1101,8 @@ is genuinely different (rebuild with a changed layer — a `docker tag` retag ke
 digest and is **not** a valid negative test) and is **not** `active` in the manifest.
 
 ```bash
-gcloud artifacts docker images describe "${AR_REF}:${TAG}"     --format='value(image_summary.digest)'
-gcloud artifacts docker images describe "${AR_REF}:${TAG}-neg" --format='value(image_summary.digest)'  # must differ
+gcloud artifacts docker images describe "${AR_REF}:${IMAGE_TAG}"     --format='value(image_summary.digest)'
+gcloud artifacts docker images describe "${AR_REF}:${IMAGE_TAG}-neg" --format='value(image_summary.digest)'  # must differ
 ```
 
 Expected on the negative CVM's serial console at the first GCP call:
@@ -1145,7 +1135,7 @@ already ran in 2.2 and 3.1: add a row, re-apply. Add before you remove — a dig
 still runs must stay `active` until nothing pins it.
 
 1. Read the new image's manifest digest, as in 2.1:
-   `gcloud artifacts docker images describe "${AR_REF}:${TAG}" --format='value(image_summary.digest)'`
+   `gcloud artifacts docker images describe "${AR_REF}:<new tag>" --format='value(image_summary.digest)'`
 2. Append `{"digest": "<new>", "release": "<tag>", "status": "active"}` to the manifest
    `kms-wif` reads. Put that edit through review: this file is what admits an image into the
    TEE, so it deserves the same scrutiny as the IAM around it.
@@ -1299,7 +1289,7 @@ external-TEE topology. Publish the host ports the client dials
 | SDK TLS handshake fails against the port-forward | The control-plane certificate's SAN must cover the name the client dials — `localhost` for a port-forward, the LB/ingress hostname otherwise (4.4). |
 | SDK TLS init fails: helper `docker cp`s CA from a LOCAL `<proj>-envector-kms-tee-1` container that doesn't exist | Pass the CA explicitly via `KMS_INTEGRATION_CACERT` (5.2); on compose, pre-extract `root_ca.crt` from the `<proj>_envector-ca-certs` volume (Appendix A). |
 | First seal -> Cloud KMS `NOT_FOUND` | Keyring not in `global` location. Recreate the keyring in `global` (a CVM cannot be fixed in place). |
-| CVM is `TERMINATED` shortly after launch and never attests; its Cloud Logging shows `trying next host - response was http.StatusNotFound` | `TEE_IMAGE`'s digest does not exist in that Artifact Registry repo — usually the example digest copied verbatim instead of the one captured in 2.1. Compare `gcloud artifacts docker images describe "${AR_REF}:${TAG}" --format='value(image_summary.digest)'` against the `ImageRef` in the launcher's `Launch Spec` log line. |
+| CVM is `TERMINATED` shortly after launch and never attests; its Cloud Logging shows `trying next host - response was http.StatusNotFound` | `TEE_IMAGE`'s digest does not exist in that Artifact Registry repo — usually the example digest copied verbatim instead of the one captured in 2.1. Compare `gcloud artifacts docker images describe "${AR_REF}:${IMAGE_TAG}" --format='value(image_summary.digest)'` against the `ImageRef` in the launcher's `Launch Spec` log line. |
 | Federation rejected: `unauthorized_client ... rejected by the attribute condition` | A launch env value does not match a pinned attestation value (digest / project / runner SA / keyring / key / secret_prefix / audience / debug image). Make every launcher value equal the `kms-root` tfvars. |
 | First per-role RPC fails though IAM is correct | IAM Credentials API (`iamcredentials.googleapis.com`) not enabled — impersonation mints tokens through it. |
 
