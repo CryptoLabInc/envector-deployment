@@ -552,15 +552,11 @@ docker pull --platform linux/amd64 "${RELEASED_KMS_TEE}"
 docker tag  "${RELEASED_KMS_TEE}" "${AR_REF}:${TAG}"
 docker push "${AR_REF}:${TAG}"
 
-# Print the MANIFEST digest — the value attestation reports as image_digest. Copy it;
-# 2.2 pastes it in literally. Deliberately not captured into a shell variable: a variable
-# outlives the command that set it, so a stale value from an earlier attempt reaches the
-# manifest looking plausible and the failure surfaces two steps later, in Terraform.
-# Use gcloud, not `docker buildx imagetools inspect --format` — older buildx ignores the
-# template and prints its whole human-readable block instead.
+# Print the MANIFEST digest — the value attestation reports as image_digest.
+# Copy it; 2.2 pastes it in literally.
 gcloud artifacts docker images describe "${AR_REF}:${TAG}" \
   --format='value(image_summary.digest)'
-# -> sha256:<64 hex chars>   — one line, nothing else
+# -> sha256:<64 hex chars>
 ```
 
 Notes: retagging the same image keeps the same digest (only a changed layer produces a new
@@ -673,8 +669,6 @@ terraform init
 terraform apply -var-file=terraform.tfvars
 
 # Write the ADC file the launcher mounts, and print the one output you copy by hand.
-# The audience and the two SA emails are read straight from `terraform output` in 4.1,
-# so there is nothing to write down here.
 terraform output -raw external_account_credential_config > wif-credconfig.json
 terraform output -json per_role_sa_emails   # -> the 5 launcher SA_* values (4.1)
 ```
@@ -756,9 +750,9 @@ used the old default, set `pool_id` to the existing value or Terraform destroys 
 
 ### 4.1 Launch the attested CVM
 
-This block runs from `terraform/gcp`, one level above where 3.1 left you — the
-`cd` below does it, since `-chdir=kms-root`, the credconfig path, and the launcher path are all
-relative to it. `TEE_IMAGE` **must** be pinned by `@sha256` digest (the allowlisted one), not a tag.
+This block runs from `terraform/gcp` — `-chdir=kms-root`, the credconfig path and
+the launcher path all resolve from there. `TEE_IMAGE` **must** be pinned by `@sha256` digest
+(the allowlisted one), not a tag.
 
 > **Why the launcher passes config as `tee-env-*` env vars — they are the attested
 > contract.** Confidential Space includes the container's environment in the attestation
@@ -818,8 +812,6 @@ instance no longer serves serial output — read Cloud Logging instead:
 ```bash
 ID="$(gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT_ID" \
   --format='value(id)')"
-# The launcher logs as structured entries, so textPayload alone prints blank lines —
-# read jsonPayload.MESSAGE too. logName tells launcher output from kernel/system noise.
 gcloud logging read "resource.labels.instance_id=\"$ID\"" \
   --project="$PROJECT_ID" --limit=150 --freshness=1d \
   --format='value(timestamp,logName.basename(),jsonPayload.MESSAGE,textPayload)' | tac
@@ -905,8 +897,6 @@ helm upgrade --install envector ./helm \
   --set shaper.image.repository="${AR_BASE}/envector-shaper" --set shaper.image.tag="$IMAGE_TAG" \
   --set kms.image.repository="${AR_BASE}/envector-kms" --set kms.image.tag="$IMAGE_TAG"
 
-# Blocks until every pod is Ready, then exits — unlike `get pods -w`, which never
-# returns and leaves you guessing whether the rollout finished.
 kubectl -n "$K8S_NAMESPACE" wait --for=condition=ready pod --all --timeout=5m
 kubectl -n "$K8S_NAMESPACE" logs -l component=kms --tail=50
 ```
@@ -1011,9 +1001,7 @@ by label so they work regardless of the release name:
 ENDPOINT_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=endpoint -o name | head -1)"
 KMS_SVC="$(kubectl -n "$K8S_NAMESPACE" get svc -l component=kms -o name | head -1)"
 
-# Re-running this section: a port-forward from an earlier attempt still holds the local
-# port and the new one fails with "address already in use". Background jobs outlive the
-# shell that started them. Scoped to this namespace so unrelated forwards survive.
+# Clear a port-forward left over from an earlier attempt; it would hold the local port.
 pkill -f "kubectl.*$K8S_NAMESPACE.*port-forward" 2>/dev/null
 
 kubectl -n "$K8S_NAMESPACE" port-forward "$ENDPOINT_SVC" 50050:50050 &
@@ -1320,9 +1308,7 @@ external-TEE topology. Publish the host ports the client dials
 | `terraform apply` fails with `Invalid provider configuration` + `Attempted to load application default credentials ... No credentials loaded` | `gcloud auth login` does not create ADC, which is what the Google provider uses. Run `gcloud auth application-default login` and `... set-quota-project "$PROJECT_ID"` (1.6). |
 | Every enVector pod is `ImagePullBackOff` while MinIO/Postgres run | The chart's default `cryptolabinc/*` images are a private Docker Hub org and the cluster has no credentials for it. Push the images to a registry the cluster can pull and set `*.image.repository`, or add an `imagePullSecrets` entry (1.7). |
 | `kubectl` fails with `executable gke-gcloud-auth-plugin not found` after a successful `get-credentials` | kubectl >= 1.26 removed the in-tree GCP auth provider; the plugin is required. Install it from the link in the Section 1 tool table. On a **snap** gcloud `gcloud components install` is disabled and the apt package pulls in a second gcloud — extract the binary from the `google-cloud-cli-gke-gcloud-auth-plugin` deb onto your `PATH` instead. |
-| A `--num-nodes=1` regional cluster comes up with three nodes | `--region` makes `--num-nodes` per-zone. Add `--node-locations="$ZONE"` at create time, or `gcloud container clusters update "$GKE_CLUSTER" --region="$REGION" --node-locations="$ZONE"` afterwards. |
 | `kms-iam` was applied on its own and its `runner_reader` binding failed | Expected: the runner SA is created by `kms-wif`. Apply `kms-wif` with `per_role_sa_emails` from `kms-iam`'s output, then re-apply `kms-iam` — 1 to add. Do not switch to `kms-root` afterwards; it keeps its own state and would create everything twice. |
-| CVM fails to authenticate and `wif-credconfig.json` is 0 bytes | `>` creates the file even when the `terraform output` before it fails — typically because it ran in a directory whose module was never applied. Re-extract it after the apply (3.1). |
 | SDK TLS handshake fails against the port-forward | The control-plane certificate's SAN must cover the name the client dials — `localhost` for a port-forward, the LB/ingress hostname otherwise (4.4). |
 | SDK TLS init fails: helper `docker cp`s CA from a LOCAL `<proj>-envector-kms-tee-1` container that doesn't exist | Pass the CA explicitly via `KMS_INTEGRATION_CACERT` (5.2); on compose, pre-extract `root_ca.crt` from the `<proj>_envector-ca-certs` volume (Appendix A). |
 | First seal -> Cloud KMS `NOT_FOUND` | Keyring not in `global` location. Recreate the keyring in `global` (a CVM cannot be fixed in place). |
