@@ -155,16 +155,6 @@ pods, wired to the CVM's plaintext `:50062`; the SDK client drives the endpoint 
 the control-plane gRPC. GKE nodes are already in-VPC, so there is no bastion or stack VM —
 you run `helm`/`kubectl` from your own machine.
 
-**A production apply is your responsibility.** That Terraform accepts the config proves GCP
-accepts it, not that a particular fleet behaves correctly at runtime. Run Section 5 in your
-own project, and read the `⚠️ Verify` callouts — each one marks something this guide could
-not establish on your behalf.
-
-> **Not yet exercised.** Sections 1, 2, 4 and 5 have been run end to end against a live
-> project on the GKE path. Section 3's single-root apply has only been checked with
-> `terraform plan` (39 resources, no cycle); it has not been applied. Treat the first
-> `kms-root` apply as the step most likely to surprise you.
-
 ---
 
 ## 1. Prerequisites
@@ -280,7 +270,6 @@ a Confidential Space CVM cannot be fixed in place (the keyring would have to be 
 The key purpose must be `encryption` (symmetric ENCRYPT_DECRYPT).
 
 ```bash
-# standard GCP provisioning — adjust project/region/names to your org
 gcloud kms keyrings create "$KMS_KEYRING" \
   --location=global \
   --project="$PROJECT_ID"
@@ -298,7 +287,6 @@ that already ran single-CMEK has metadata envelopes that become undecryptable un
 key.
 
 ```bash
-# standard GCP provisioning — adjust project/region/names to your org
 # Optional: only if you want a dedicated metadata CMEK (greenfield namespaces only).
 gcloud kms keys create "$KMS_KEY_METADATA" \
   --location=global --keyring="$KMS_KEYRING" \
@@ -313,7 +301,6 @@ The modules and launcher default to `ar_location = asia-northeast3`,
 `asia-northeast3-docker.pkg.dev/<project>/es2-images/envector-kms-tee`.
 
 ```bash
-# standard GCP provisioning — adjust project/region/names to your org
 gcloud artifacts repositories create "$AR_REPOSITORY" \
   --repository-format=docker \
   --location="$AR_LOCATION" \
@@ -334,7 +321,6 @@ The subnet carries two **secondary ranges** because the GKE cluster is VPC-nativ
 plumbing — it is the source range the Section 4.2 firewall rule allows to reach `:50062`.
 
 ```bash
-# standard GCP provisioning — adjust project/region/names to your org
 # Dedicated VPC (custom subnet mode).
 gcloud compute networks create "$NETWORK" \
   --subnet-mode=custom \
@@ -604,27 +590,6 @@ carries the Confidential Space launch-policy labels
   Then set `manifest_path = "./test-manifest.json"` in that module's tfvars — without it the
   module reads the committed manifest, whose empty `active` set is a valid deny-all. A
   plan-time precondition rejects any digest not matching `^sha256:[0-9a-f]{64}$`.
-- **Production (managed GitOps promote):** the release pipeline / `promote-digest.sh`
-  appends `{digest, release, status:"active"}` to the committed manifest via a
-  CODEOWNERS-gated PR; after merge, an operator re-applies `kms-root` to re-derive
-  the allowlist. Manifest rows are `{digest, release, status}` with
-  `status in {active, deprecated, revoked}`.
-
-  ```bash
-  # These paths are relative to the repo root:
-  cd "$(git rev-parse --show-toplevel)"
-  # Capture (GA X.Y.Z tags only; prints nothing for a prerelease/suffixed tag).
-  # The script only PRINTS the digest, so assign it. It resolves
-  # <ar-image-base>:<TAG>-amd64 (the release pipeline's per-arch GA tag); pass your
-  # AR image base as the 2nd arg (else it defaults to the release registry), and make
-  # sure a `${TAG}-amd64` tag exists there. If your 2.1 publish used a plain
-  # `${AR_REF}:${TAG}`, skip this script and use the digest captured in 2.1 instead.
-  NEW="$(bash kms-digests/capture-kms-tee-digest.sh "$TAG" "$AR_REF")"
-  # Promote (append as active; idempotent; non-zero on a deprecated/revoked conflict):
-  bash kms-digests/promote-digest.sh "$NEW" "$TAG"     # prints true|false
-  bash kms-digests/lint_test.sh                        # schema lint must pass
-  ```
-
 - **Self-hosted:** each deployer vendors a synced copy of the manifest and sets
   `var.manifest_path` to it (else the module reads the in-repo seed `[]` -> deny-all).
   Derive with `include_deprecated = true` so a managed deprecation does not force-remove a
@@ -1067,7 +1032,6 @@ nothing to install on your machine for this step. `--network host` is what joins
 5.1 port-forwards.
 
 ```bash
-# The container installs the SDK itself — nothing to install on your machine for this.
 # Pin the version to your enVector release. For a private or air-gapped distribution,
 # install a wheel from the mounted checkout instead: pip install "/work/<pyenvector-*.whl>"
 SDK_VERSION=<pyenvector version matching your enVector release>
@@ -1093,9 +1057,7 @@ port-forwards on the host loopback; on macOS/Windows run the client on the host 
 `KMS_INTEGRATION_CACERT` at a non-empty file + `--kms-address localhost` makes the example
 use TLS with that CA and skip the missing-local-container fallback. `--preset` /
 `--eval-mode` are **client-side** flags (default `ip3` / `mms32`) that **must** match the
-control plane's `ENVECTOR_KMS_DEFAULT_PRESET` / `_EVAL_MODE`. The wheel filename/version
-The example imports the installed `pyenvector`, so the version you pin here is the client
-this run actually exercises. Pin it to your enVector release.
+control plane's `ENVECTOR_KMS_DEFAULT_PRESET` / `_EVAL_MODE`.
 
 **Expected (green):** the control-plane audit shows
 `GetKeyDetails(NotFound) -> GenerateKey(success) -> GetKeyStatus(READY) ->
@@ -1187,6 +1149,9 @@ oauth2/google: status code 400: {"error":"unauthorized_client",
 STS refuses the base SA -> no impersonation -> fails closed at startup (because
 `ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE=true` forces the STS exchange during backend
 construction, so `kms-tee` never serves `:50062`).
+
+---
+
 ## 6. Operate
 
 ### 6.1 Key lifecycle (rotate / suspend / destroy)
