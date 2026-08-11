@@ -1,10 +1,11 @@
 # envector-chart/templates/service.yaml
-{{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
+{{- /* dig defaults only when the key is absent; an explicit "" disables election. */ -}}
+{{- $electionBackend := dig "election" "backend" "k8s-lease" .Values.orchestrator }}
 {{- $orchestratorLeaderOnlyHA := and (eq $electionBackend "k8s-lease") (gt (int (.Values.orchestrator.replicas | default 1)) 1) }}
 {{- /* Leader-only for any k8s-lease backend, incl. replicas=1. Keep in sync with backend-deployment.yaml. */ -}}
-{{- $backendLeaderOnlyHA := eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease" }}
+{{- $backendLeaderOnlyHA := eq (dig "election" "backend" "k8s-lease" .Values.backend) "k8s-lease" }}
 {{- $computeLeaderOnlyHA := and (eq (.Values.compute.election.backend | default "") "k8s-lease") (gt (int (.Values.compute.replicas | default 1)) 1) }}
-{{- $shaperLeaderOnlyHA := and (eq (.Values.shaper.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.shaper.replicas | default 1)) 1) }}
+{{- $shaperLeaderOnlyHA := and (eq (.Values.shaper.election.backend | default "") "k8s-lease") (gt (int (.Values.shaper.replicas | default 1)) 1) }}
 ---
 apiVersion: v1
 kind: Service

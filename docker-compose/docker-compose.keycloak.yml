@@ -3,18 +3,100 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.1.4
     pull_policy: "${PULL_POLICY:-always}"
-    command: ["start-dev", "--import-realm"]
+    # Production mode (`start`) backed by a persistent Postgres in metadatadb, so
+    # realm / users / clients survive Keycloak restarts and `compose down`.
+    # (`start-dev` used in-memory H2 and lost ALL runtime state on restart, which
+    # is unsafe for a customer deployment.) `--import-realm` seeds the base realm
+    # on first start; once the realm exists in the DB the import is skipped.
+    command: ["start", "--import-realm"]
     ports:
       - "${KEYCLOAK_HOST_PORT:-8082}:${KEYCLOAK_PORT:-8080}"
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:-kcadmin}"
       KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:-kcadmin}"
       KC_HOSTNAME: "http://localhost:${KEYCLOAK_HOST_PORT:-8082}"
+      # TLS terminates upstream (localhost / customer reverse proxy) -> serve HTTP.
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      # Persistent store: the shared metadatadb Postgres, dedicated `keycloak` DB.
+      # Keycloak connects as the least-privilege `keycloak` role (owner of only the
+      # `keycloak` database), NOT the metadatadb superuser, so a Keycloak compromise
+      # cannot reach the envector metadata in the same cluster. The role + database
+      # are provisioned by keycloak-db-init; KEYCLOAK_DB_PASSWORD is its password
+      # (override in production; the dev default matches the kcadmin dev default).
+      KC_DB: "postgres"
+      KC_DB_URL_HOST: "metadatadb"
+      KC_DB_URL_PORT: "${ENVECTOR_DB_PORT:-5432}"
+      KC_DB_URL_DATABASE: "keycloak"
+      KC_DB_USERNAME: "keycloak"
+      KC_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD:-keycloak}"
+    depends_on:
+      # Gate on the one-shot init so the `keycloak` role + database are guaranteed
+      # to exist before Keycloak connects (keycloak-db-init itself depends_on
+      # metadatadb, so Keycloak still transitively waits for the DB server).
+      keycloak-db-init:
+        condition: service_completed_successfully
     volumes:
-      # Uncomment to persist local Keycloak state, including users created via the UI or Admin API.
-      # - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/keycloak/data:/opt/keycloak/data
       - ${START_ENVECTOR_COMPOSE_DIR:-.}/keycloak/import:/opt/keycloak/data/import:ro
     restart: on-failure:10
+
+  # One-shot init that ensures the dedicated `keycloak` role + database exist on
+  # every `up`, regardless of pgdata volume state. Unlike the postgres
+  # /docker-entrypoint-initdb.d hook (which fires ONLY on a fresh, empty pgdata),
+  # this waits for metadatadb and then runs the idempotent provisioning SQL AS THE
+  # SUPERUSER, so a PRE-EXISTING metadatadb volume (created before --keycloak was
+  # enabled) also gets the role + database and Keycloak does not crash-loop.
+  # KEYCLOAK_DB_PASSWORD is passed into the SQL as the `kc_pw` psql variable so the
+  # password is never hard-coded in the mounted file.
+  keycloak-db-init:
+    image: postgres:14.9
+    pull_policy: "${PULL_POLICY:-always}"
+    depends_on:
+      - metadatadb
+    environment:
+      PGHOST: "metadatadb"
+      PGPORT: "${ENVECTOR_DB_PORT:-5432}"
+      PGUSER: "${ENVECTOR_DB_USER:-postgres}"
+      PGPASSWORD: "${ENVECTOR_DB_PASSWORD:-.}"
+      PGDATABASE: "postgres"
+      KEYCLOAK_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD:-keycloak}"
+      # Name of the shared envector metadata DB, so the init SQL can revoke the
+      # keycloak role's PUBLIC-default access to it (see 10-keycloak-db.sql step 3).
+      ENVECTOR_DB_NAME: "${ENVECTOR_DB_NAME:-mydatabase}"
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/keycloak/initdb/10-keycloak-db.sql:/tmp/10-keycloak-db.sql:ro
+    entrypoint:
+      - sh
+      - -c
+      # $$ (not $) so Compose does NOT interpolate host-side and leaves a literal
+      # $VAR for the container shell to expand from this service's environment
+      # (where the :- defaults are applied): KEYCLOAK_DB_PASSWORD matches the
+      # keycloak service's KC_DB_PASSWORD, and ENVECTOR_DB_NAME targets the metadata
+      # DB for the REVOKE. A single $ would be substituted by Compose from the
+      # host/.env (no default there) and inject an empty value on a bare `up`.
+      # Collision guard: the bundled Keycloak's dedicated role AND database are both
+      # named `keycloak`, so if the envector metadata user ($PGUSER = ENVECTOR_DB_USER)
+      # or the metadata DB ($ENVECTOR_DB_NAME) is also `keycloak`, provisioning would
+      # clobber the metadata user's password / hijack the metadata database. Fail
+      # fast before touching anything instead.
+      - 'if [ "$$PGUSER" = keycloak ] || [ "$$ENVECTOR_DB_NAME" = keycloak ]; then echo "ERROR: ENVECTOR_DB_USER / ENVECTOR_DB_NAME must not be \"keycloak\" -- it collides with the bundled Keycloak role/database." >&2; exit 1; fi; until pg_isready -q; do echo "waiting for metadatadb..."; sleep 1; done; exec psql -v ON_ERROR_STOP=1 -v kc_pw="$$KEYCLOAK_DB_PASSWORD" -v meta_db="$$ENVECTOR_DB_NAME" -f /tmp/10-keycloak-db.sql'
+    # One-shot: do NOT restart on failure. The entrypoint already waits for the DB
+    # internally (pg_isready loop), so the only non-zero exits are deterministic
+    # (the collision guard's `exit 1`, or an ON_ERROR_STOP SQL error) — restarting
+    # would just crash-loop and turn the guard's intended fail-fast into an
+    # indefinite hang on keycloak's service_completed_successfully gate. `no`
+    # matches the other one-shot init services in this deployment.
+    restart: "no"
+
+  # Bundled Keycloak reuses metadatadb for its persistent store. Extend metadatadb
+  # (only when the --keycloak overlay is active) with a persistent pgdata volume so
+  # a `compose down` does not drop realm / user / client state (nor the envector
+  # metadata that shares this DB). The dedicated `keycloak` database itself is
+  # ensured by the keycloak-db-init one-shot above, which runs on every `up`
+  # regardless of whether pgdata is fresh or pre-existing.
+  metadatadb:
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata:/var/lib/postgresql/data
 
   envector-endpoint:
     ports:

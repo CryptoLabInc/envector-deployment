@@ -8,6 +8,7 @@
 services:
   kms-storage:
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
@@ -27,6 +28,7 @@ services:
     # Image + server binary env-selected; default Vault, OpenBao via
     # ENVECTOR_KMS_SM_IMAGE=openbao/openbao:2.5.5 + ENVECTOR_KMS_SM_BIN=bao.
     image: "${ENVECTOR_KMS_SM_IMAGE:-hashicorp/vault:1.20}"
+    cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     entrypoint:
       - "${ENVECTOR_KMS_SM_BIN:-vault}"
     command: server -config=/secret-manager/config/secret-manager.hcl
@@ -44,6 +46,7 @@ services:
 
   envector-kms:
     image: "${ENVECTOR_KMS_IMAGE_NAME:-envector-kms}:${ENVECTOR_KMS_TAG:-latest}"
+    cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-if_not_present}"
     init: true
     ports:
@@ -55,13 +58,18 @@ services:
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_KEY_DIR: "/data/keys"
       ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip3}"
-      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
+      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mms32}"
       ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
       ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
       ENVECTOR_KMS_MINIO_SECRET_KEY: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
       ENVECTOR_KMS_MINIO_BUCKET: "${ENVECTOR_KMS_MINIO_BUCKET:-kms-keys}"
       ENVECTOR_KMS_MINIO_USE_SSL: "false"
       ENVECTOR_KMS_TEE_ADDR: "envector-kms-tee:${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      # Empty is treated as unset: KMS only overrides the bucket when the parsed RPS
+      # is > 0 (config.go), so an empty value keeps the built-in default (read 50 rps /
+      # burst 100) — it is NOT parsed as 0. Set a value to raise the score-decrypt cap.
+      ENVECTOR_KMS_RATE_LIMIT_READ_RPS: "${ENVECTOR_KMS_RATE_LIMIT_READ_RPS:-}"
+      ENVECTOR_KMS_RATE_LIMIT_READ_BURST: "${ENVECTOR_KMS_RATE_LIMIT_READ_BURST:-}"
       ENVECTOR_KMS_AUTH_JWKS_URL: "${ENVECTOR_KMS_AUTH_JWKS_URL:-}"
       ENVECTOR_KMS_AUTH_OIDC_ISSUER: "${ENVECTOR_KMS_AUTH_OIDC_ISSUER:-}"
       ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES: "${ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES:-}"
@@ -80,6 +88,7 @@ services:
 
   envector-kms-tee:
     image: "${ENVECTOR_KMS_TEE_IMAGE_NAME:-envector-kms-tee}:${ENVECTOR_KMS_TEE_TAG:-${ENVECTOR_KMS_TAG:-latest}}"
+    cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-if_not_present}"
     init: true
     expose:
@@ -88,6 +97,20 @@ services:
       ENVECTOR_KMS_TEE_GRPC_PORT: "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
+      # Bound plaintext secret-key residency during batch decrypt (GAP-013): a
+      # scope re-unseals a fresh key once it has processed this many items or been
+      # open this long, zeroizing the prior key. Defaults mirror config.go
+      # (10000 items / 30s); <=0 on either axis disables that axis. The item unit
+      # is SHARD BLOBS, not result rows -- one shard can carry many rows, so size
+      # this against shard count, not against the requested top-k.
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS:-10000}"
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION:-30s}"
+      # Cap concurrent DecryptScores RPCs. Each in-flight decrypt mlocks
+      # its own plaintext key region, so this bounds the PEAK locked-key footprint
+      # under the finite memlock ceiling below (512MiB, sized for maxConcurrentDecrypt=32).
+      # Default 32 matches that envelope; unset/0 is normalized UP to the finite
+      # default in config.go (it never means "unbounded").
+      ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES: "${ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES:-32}"
       ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-http://kms-secret-manager:8200}"
       ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
       ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
@@ -95,6 +118,29 @@ services:
     depends_on:
       kms-secret-manager:
         condition: service_healthy
+    # Disable core dumps so secret key material can't leak into a dump file.
+    # (evi's ctor already blocks coredumps process-wide; this keeps the three
+    # KMS profiles symmetric with kms.yml / kms-gcp.yml as defense-in-depth.)
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+      # Raise the memlock (RLIMIT_MEMLOCK) hard cap so the TEE binary can mlock
+      # secret-key pages that never swap to disk. Container runtimes default this
+      # to 8MiB, which the peak below fits into only barely and with nothing left
+      # over; a process can raise its soft limit no higher than the inherited
+      # hard cap, so the ceiling has to be chosen here.
+      #
+      # Dev/test SHARED-HOST profile, so the cap is BOUNDED (host-DoS backstop)
+      # to match docker-compose.kms.yml; the dedicated Confidential-VM profile
+      # (docker-compose.kms-gcp.yml) is finite too, just looser at 2GiB because
+      # it has no co-tenant to protect. docker-compose.kms.yml carries the
+      # canonical sizing derivation -- in short, peak locked memory tracks the
+      # decrypt CONCURRENCY cap times roughly 100KiB per live key, so 512MiB is
+      # a generous ceiling rather than a fitted budget.
+      memlock:
+        soft: 536870912  # 512 MiB
+        hard: 536870912  # 512 MiB
     restart: always
 
 volumes:

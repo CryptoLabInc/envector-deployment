@@ -487,7 +487,14 @@
     "realm": [
       {
         "name": "security",
-        "description": "envector full administrative access"
+        "description": "envector full administrative access",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "audit-only",
+            "audit-exporter"
+          ]
+        }
       },
       {
         "name": "ops",

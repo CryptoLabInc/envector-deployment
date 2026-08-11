@@ -139,6 +139,7 @@ spec:
                 name: {{ include "envector-chart.storageSecretName" . }}
             {{- end }}
           env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
             - name: ENVECTOR_SHAPER_PORT
               value: {{ .Values.shaper.service.port | default 50056 | quote }}
             - name: MALLOC_ARENA_MAX
@@ -302,6 +303,7 @@ spec:
                 name: {{ include "envector-chart.storageSecretName" . }}
             {{- end }}
           env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
             - name: ENVECTOR_SHAPER_PORT
               value: {{ .Values.shaper.service.port | default 50056 | quote }}
             - name: MALLOC_ARENA_MAX

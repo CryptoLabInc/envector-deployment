@@ -55,3 +55,14 @@ tests:
     asserts:
       - notExists:
           path: spec.selector["envector.ai/compute-leader"]
+
+  - it: pins GOMAXPROCS to the cpu limit and keeps liveness timeout non-aggressive
+    template: templates/compute-deployment.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="GOMAXPROCS")].valueFrom.resourceFieldRef.resource
+          value: limits.cpu
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 5

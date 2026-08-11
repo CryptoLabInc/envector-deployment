@@ -33,7 +33,12 @@ Options:
   --num-orchestrator N   Number of orchestrator workers (scales envector-orchestrator)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
-  --down-volumes         When used with --down, also remove named/anonymous volumes (-v)
+  --down-volumes         When used with --down, also remove named/anonymous volumes (-v).
+                         With --keycloak/--audit the Keycloak/metadata Postgres uses a host
+                         bind mount (${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata) that
+                         DELIBERATELY survives -v, so routine volume cleanup can't wipe the
+                         realm/user + envector metadata. A full reset is an explicit
+                         rm -rf of that path.
   --log-file PATH        Write compose logs to PATH after up -d (default: ./docker-logs.log)
   --dry-run              Print the final command without executing
   -h, --help             Show this help and exit
@@ -57,6 +62,10 @@ USAGE
   cat <<'USAGE'
 - Relative paths for --env-file and --log-file are resolved from your current working directory (pwd).
 - --config prints the fully-resolved docker compose configuration and does not start containers.
+- --down-volumes removes docker named/anonymous volumes only. When running with
+  --keycloak/--audit, the Keycloak/metadata Postgres keeps its data in a host bind mount
+  (${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata) that survives `down -v`; delete that
+  directory by hand to fully reset realm/user/client + metadata.
 USAGE
 }
 
@@ -550,19 +559,55 @@ fi
   "${cmd[@]}"
 )
 
+# Build the base `docker compose ...` invocation (compose files + env-file + project)
+# into the global COMPOSE_BASE array, shared by the post-scale pin step and log tailer.
+build_compose_base() {
+  COMPOSE_BASE=( docker compose "${compose_args[@]}" )
+  if "$USE_ENV_FILE"; then COMPOSE_BASE+=( --env-file "$ENV_FILE" ); fi
+  if [[ -n "$PROJECT_DIR" ]]; then COMPOSE_BASE+=( --project-directory "$PROJECT_DIR" ); fi
+  if [[ -n "$PROJECT" ]]; then COMPOSE_BASE+=( -p "$PROJECT" ); fi
+}
+
+# --numa-auto per-replica CPU pinning: `--scale` gives every compute replica the same
+# cpuset (compose can't template a per-replica one), so numa_autopin.sh exports one
+# ENVECTOR_COMPUTE_CPUSET_<n> per replica (only under --numa-auto) and we apply each with
+# `docker update` here — mapping slices to replicas by the container's compose ordinal
+# (docker's listing order is not the replica order, so we key on the container name).
+if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$GPU" && (( NUM_COMPUTE > 1 )) \
+   && [[ -n "${ENVECTOR_COMPUTE_CPUSET_1:-}" ]]; then
+  build_compose_base
+  compute_cid=()   # indexed by replica ordinal (numeric → plain indexed array)
+  while read -r cid; do
+    [[ -z "$cid" ]] && continue
+    cname=$(docker inspect --format '{{.Name}}' "$cid" 2>/dev/null) || continue
+    ord=${cname##*-}   # trailing ordinal of <project>-envector-compute-<n>
+    [[ "$ord" =~ ^[0-9]+$ ]] && compute_cid[$ord]="$cid"
+  done < <("${COMPOSE_BASE[@]}" ps -q envector-compute 2>/dev/null)
+  quota="${ENVECTOR_COMPUTE_CPUS_PER_REPLICA:-}"
+  for ((r = 1; r <= NUM_COMPUTE; r++)); do
+    slice_var="ENVECTOR_COMPUTE_CPUSET_${r}"
+    slice="${!slice_var:-}"
+    cid="${compute_cid[$r]:-}"
+    if [[ -z "$slice" || -z "$cid" ]]; then
+      echo "Warning: no container/slice for compute replica ${r}; skipping its CPU pinning." >&2
+      continue
+    fi
+    upd=( docker update --cpuset-cpus "$slice" )
+    [[ -n "$quota" ]] && upd+=( --cpus "$quota" )
+    upd+=( "$cid" )
+    if "${upd[@]}" >/dev/null 2>&1; then
+      echo "Pinned compute replica ${r} to CPUs ${slice}${quota:+ (cpus=${quota})}"
+    else
+      echo "Warning: failed to pin compute replica ${r} to CPUs ${slice}" >&2
+    fi
+  done
+fi
+
 if ! "$DOWN" && ! "$CONFIG_MODE"; then
   mkdir -p "$(dirname "$LOG_FILE")"
   : > "$LOG_FILE"
-  log_cmd=( docker compose "${compose_args[@]}" )
-  if "$USE_ENV_FILE"; then
-    log_cmd+=( --env-file "$ENV_FILE" )
-  fi
-  if [[ -n "$PROJECT_DIR" ]]; then
-    log_cmd+=( --project-directory "$PROJECT_DIR" )
-  fi
-  if [[ -n "$PROJECT" ]]; then
-    log_cmd+=( -p "$PROJECT" )
-  fi
+  build_compose_base
+  log_cmd=( "${COMPOSE_BASE[@]}" )
   if "$GPU" && (( NUM_COMPUTE > 1 )); then
     max_extra=$(( NUM_COMPUTE - 1 ))
     (( max_extra > 3 )) && max_extra=3

@@ -2,6 +2,7 @@
 services:
   envector-endpoint:
     image: "${ENVECTOR_ENDPOINT_IMAGE_NAME:-envector-endpoint}:${ENVECTOR_ENDPOINT_TAG:-latest}"
+    cpuset: "${ENVECTOR_ENDPOINT_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-always}"
     ports:
       - ${ENVECTOR_ENDPOINT_HOST_PORT:-50050}:${ENVECTOR_ENDPOINT_PORT:-50050}
@@ -31,12 +32,14 @@ services:
 
   envector-shaper:
     image: "${ENVECTOR_SHAPER_IMAGE_NAME:-envector-shaper}:${ENVECTOR_SHAPER_TAG:-latest}"
+    cpuset: "${ENVECTOR_SHAPER_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-always}"
     init: true
     environment:
       ENVECTOR_SHAPER_PORT: "${ENVECTOR_SHAPER_PORT:-50056}"
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+      EVI_ALLOW_PAGEABLE_SECRET_KEY: "${EVI_ALLOW_PAGEABLE_SECRET_KEY:-0}"
       # Storage
       ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
       ENVECTOR_STORAGE_ADDRESS: "${ENVECTOR_STORAGE_ADDRESS:-storage:${ENVECTOR_STORAGE_PORT:-59000}}"
@@ -60,6 +63,7 @@ services:
 
   envector-backend:
     image: "${ENVECTOR_BACKEND_IMAGE_NAME:-envector-backend}:${ENVECTOR_BACKEND_TAG:-latest}"
+    cpuset: "${ENVECTOR_BACKEND_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-always}"
     environment:
       ENVECTOR_BACKEND_PORT: "${ENVECTOR_BACKEND_PORT:-50051}"
@@ -90,12 +94,15 @@ services:
       ENVECTOR_BASELINE_INSERTABLE_SHARDS: "${ENVECTOR_BASELINE_INSERTABLE_SHARDS:-8}"
       # Cap concurrent shard loads issued by LoadIndex to bound compute peak
       ENVECTOR_LOAD_INDEX_SHARD_CONCURRENCY: "${ENVECTOR_LOAD_INDEX_SHARD_CONCURRENCY:-32}"
+      # Single-insert accumulator rotation threshold
+      ENVECTOR_SINGLE_INSERT_MERGE_THRESHOLD: "${ENVECTOR_SINGLE_INSERT_MERGE_THRESHOLD:-1024}"
     restart: on-failure:10
     depends_on:
       - envector-shaper
 
   envector-orchestrator:
     image: "${ENVECTOR_ORCHESTRATOR_IMAGE_NAME:-envector-orchestrator}:${ENVECTOR_ORCHESTRATOR_TAG:-latest}"
+    cpuset: "${ENVECTOR_ORCHESTRATOR_CPUSET:-}"
     pull_policy: "${PULL_POLICY:-always}"
     environment:
       ENVECTOR_ORCHESTRATOR_PORT: "${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
@@ -124,6 +131,7 @@ services:
       ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+      EVI_ALLOW_PAGEABLE_SECRET_KEY: "${EVI_ALLOW_PAGEABLE_SECRET_KEY:-0}"
       # Limit glibc malloc arenas to prevent memory retention from per-thread
       # arenas under heavy CGO/EVI allocation (default: 8 * num_cpus).
       MALLOC_ARENA_MAX: "${MALLOC_ARENA_MAX:-2}"
@@ -132,10 +140,24 @@ services:
     # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
     volumes:
       - ${START_ENVECTOR_COMPOSE_DIR:-.}/token.jwt:/envector/license/token.jwt
+    # Pin compute to a single NUMA node's physical cores on multi-socket hosts. EVI
+    # search is compute/coordination-bound (it uses only ~5-7% of node bandwidth), so
+    # the win is from avoiding cross-socket coordination + contention, not saving
+    # bandwidth. Empty = no pinning (default; portable). Set manually (e.g.
+    # "0-23,48-55") or let `start_envector.sh --numa-auto` compute it. With
+    # --num-compute N, --numa-auto partitions the pool into disjoint per-replica cpusets
+    # (this base value is the whole pool; start_envector re-pins each replica via
+    # docker update after --scale, since compose can't template per-replica cpusets).
+    cpuset: "${ENVECTOR_COMPUTE_CPUSET:-}"
     deploy:
       resources:
         limits:
-          cpus: '4.0'
+          # CPU-time quota (CFS). Must be >= the cpuset size or the cpuset is
+          # throttled to this value. `--numa-auto` raises it to match the pinned
+          # core count; default 4 keeps prior behavior for non-pinned setups.
+          # Keep it >= the reservation below (an extreme 1-core pin would otherwise be
+          # rejected by compose for limit < reservation).
+          cpus: '${ENVECTOR_COMPUTE_CPUS:-4}'
           memory: 24G
         reservations:
           cpus: '2.0'

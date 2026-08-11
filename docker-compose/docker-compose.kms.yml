@@ -65,6 +65,14 @@ services:
       KMS_API_TLS_CN: "${KMS_API_TLS_CN:-envector-kms}"
       KMS_API_TLS_DNS: "${KMS_API_TLS_DNS:-envector-kms,localhost}"
       KMS_API_TLS_IP: "${KMS_API_TLS_IP:-127.0.0.1}"
+      # Internal-gRPC (:50062) mTLS pair: cp-tee-srv = server cert (envector-kms-tee),
+      # cp-tee-cli = client cert (envector-kms control plane). Distinct SANs
+      # (cptee-server / cptee-client) so each side pins the peer's identity and a
+      # different leaf from the shared step-ca root cannot impersonate either endpoint.
+      CPTEE_SRV_TLS_CN: "${CPTEE_SRV_TLS_CN:-cptee-server}"
+      CPTEE_SRV_TLS_DNS: "${CPTEE_SRV_TLS_DNS:-cptee-server}"
+      CPTEE_CLI_TLS_CN: "${CPTEE_CLI_TLS_CN:-cptee-client}"
+      CPTEE_CLI_TLS_DNS: "${CPTEE_CLI_TLS_DNS:-cptee-client}"
     volumes:
       - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/cert-init-entrypoint.sh:/cert-init-entrypoint.sh:ro
       - envector-ca-secrets:/step-secrets:ro
@@ -73,6 +81,8 @@ services:
       - kms-secret-manager-certs:/certs/secret-manager
       - kms-tee-certs:/certs/kms-tee
       - kms-api-certs:/certs/kms-api
+      - kms-cptee-srv-certs:/certs/cp-tee-srv
+      - kms-cptee-cli-certs:/certs/cp-tee-cli
     depends_on:
       step-ca:
         condition: service_healthy
@@ -130,7 +140,7 @@ services:
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_KEY_DIR: "/data/keys"
       ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip3}"
-      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mm32}"
+      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mms32}"
       ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
       ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
       ENVECTOR_KMS_MINIO_SECRET_KEY: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
@@ -149,8 +159,17 @@ services:
       ENVECTOR_KMS_GRPC_TLS_CERT: /certs/kms-api/kms-api.crt
       ENVECTOR_KMS_GRPC_TLS_KEY: /certs/kms-api/kms-api.key
       ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS: "${ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS:-true}"
+      # Internal mTLS to envector-kms-tee (:50062): present the control-plane
+      # client cert and verify the tee server cert against the step-ca root.
+      ENVECTOR_KMS_TEE_TLS_CLIENT_CERT: /certs/cp-tee-cli/tls.crt
+      ENVECTOR_KMS_TEE_TLS_CLIENT_KEY: /certs/cp-tee-cli/tls.key
+      ENVECTOR_KMS_TEE_TLS_SERVER_CA: /certs/ca/root_ca.crt
+      ENVECTOR_KMS_TEE_TLS_SERVER_NAME: "${ENVECTOR_KMS_TEE_TLS_SERVER_NAME:-cptee-server}"
+      ENVECTOR_KMS_TEE_REQUIRE_MTLS: "${ENVECTOR_KMS_TEE_REQUIRE_MTLS:-true}"
     volumes:
       - kms-api-certs:/certs/kms-api:ro
+      - envector-ca-certs:/certs/ca:ro
+      - kms-cptee-cli-certs:/certs/cp-tee-cli:ro
     depends_on:
       kms-storage:
         condition: service_healthy
@@ -184,6 +203,20 @@ services:
       ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
       ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
       ENVECTOR_KMS_DECRYPT_TOPK_JOBS: "${ENVECTOR_KMS_DECRYPT_TOPK_JOBS:-1}"
+      # Bound plaintext secret-key residency during batch decrypt (GAP-013): a
+      # scope re-unseals a fresh key once it has processed this many items or been
+      # open this long, zeroizing the prior key. Defaults mirror config.go
+      # (10000 items / 30s); <=0 on either axis disables that axis. The item unit
+      # is SHARD BLOBS, not result rows -- one shard can carry many rows, so size
+      # this against shard count, not against the requested top-k.
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS:-10000}"
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION:-30s}"
+      # Cap concurrent DecryptScores RPCs. Each in-flight decrypt mlocks
+      # its own plaintext key region, so this bounds the PEAK locked-key footprint
+      # under the finite memlock ceiling below (512MiB, sized for maxConcurrentDecrypt=32).
+      # Default 32 matches that envelope; unset/0 is normalized UP to the finite
+      # default in config.go (it never means "unbounded").
+      ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES: "${ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES:-32}"
       ENVECTOR_KMS_SECRET_MANAGER_ADDR: "${ENVECTOR_KMS_SECRET_MANAGER_ADDR:-https://kms-secret-manager:8200}"
       ENVECTOR_KMS_SECRET_MANAGER_MOUNT: "${ENVECTOR_KMS_SECRET_MANAGER_MOUNT:-secret}"
       ENVECTOR_KMS_SEAL_MODE: "${ENVECTOR_KMS_SEAL_MODE:-vault-transit}"
@@ -192,10 +225,23 @@ services:
       KMS_SM_CLIENT_CERT: /certs/kms-tee/kms-tee.crt
       KMS_SM_CLIENT_KEY: /certs/kms-tee/kms-tee.key
       ENVECTOR_KMS_REQUIRE_SM_TLS: "${ENVECTOR_KMS_REQUIRE_SM_TLS:-true}"
+      # Internal mTLS server on :50062: require + verify the control-plane
+      # client cert against the step-ca root. Confidential Space
+      # attestation-bound issuance is a separate path; here the certs come from
+      # the step-ca overlay via cert-init.
+      ENVECTOR_KMS_TEE_TLS_CERT: /certs/cp-tee-srv/tls.crt
+      ENVECTOR_KMS_TEE_TLS_KEY: /certs/cp-tee-srv/tls.key
+      ENVECTOR_KMS_TEE_TLS_CLIENT_CA: /certs/ca/root_ca.crt
+      # Pin the control-plane client SAN: the verified client leaf must carry this
+      # name, so a different leaf from the shared step-ca root cannot authenticate
+      # as the control plane (defense-in-depth over the chain-only check).
+      ENVECTOR_KMS_TEE_TLS_CLIENT_NAME: "${ENVECTOR_KMS_TEE_TLS_CLIENT_NAME:-cptee-client}"
+      ENVECTOR_KMS_TEE_REQUIRE_MTLS: "${ENVECTOR_KMS_TEE_REQUIRE_MTLS:-true}"
     volumes:
       - envector-ca-certs:/certs/ca:ro  ## If you want to use the cert volume, comment this out and enable the line below.
       # - ${DOCKER_VOLUME_DIRECTORY_KMS:-./kms-volumes}/envector-ca-certs:/certs/ca:ro
       - kms-tee-certs:/certs/kms-tee:ro
+      - kms-cptee-srv-certs:/certs/cp-tee-srv:ro
     depends_on:
       kms-secret-manager:
         condition: service_healthy
@@ -204,6 +250,44 @@ services:
       core:
         soft: 0
         hard: 0
+      # Raise the memlock (RLIMIT_MEMLOCK) hard cap so the TEE binary can
+      # mlock secret-key pages that never swap to disk. Container runtimes
+      # default this to 8MiB, which the semaphore-bounded peak derived below
+      # fits into only barely and with nothing left over; a process can raise
+      # its soft limit no higher than the inherited hard cap, so the ceiling
+      # has to be chosen here rather than left to the runtime default.
+      #
+      # This is a SHARED-HOST profile (generic TLS / Vault, docker-compose next
+      # to other services), so the cap is BOUNDED to keep a host-DoS backstop:
+      # a decrypt-path bug or concurrency runaway can only lock a finite amount
+      # of non-swappable RAM, not the whole host. Every KMS profile is finite;
+      # what differs is the headroom. Here the backstop protects co-tenants, so
+      # it is set as tight as still leaves ordinary growth unconstrained. The
+      # dedicated Confidential-VM profile (docker-compose.kms-gcp.yml, single
+      # workload) has no co-tenant to protect -- a runaway there can only
+      # OOM-kill the VM it owns -- so it takes a looser 2GiB ceiling.
+      #
+      # SIZING -- canonical derivation; the other KMS profiles refer back here.
+      # Two DIFFERENT things get locked per in-flight decrypt, and they are
+      # easy to conflate:
+      #   1. The Go-side locked region holds the SERIALIZED key returned by
+      #      Unseal. A serialized enVector SecretKey measures ~1KiB, so mlock
+      #      rounds it to one page (4KiB).
+      #   2. evi, in the same process across cgo, separately locks the EXPANDED
+      #      C++ SecretKeyData: at ring degree 4096 that is one i64[4096] plus
+      #      two u64[4096] plus the deb key, page-rounded -- on the order of
+      #      100KiB per live key. evi itself warns when this hard cap is below
+      #      16MiB, which is the scale it expects.
+      # Peak therefore tracks the CONCURRENCY cap, not a multi-MB blob:
+      #   ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES (default 32)
+      #     * (~4KiB Go region + ~100KiB evi expanded key) ~= 3-4MiB, plus evi
+      #     context and key-pack allocations that are not per-scope.
+      # 512MiB is a deliberately generous CEILING, not a fitted budget: it is
+      # the host-DoS backstop, sized so ordinary growth never approaches it.
+      # Revisit only if the concurrency cap is raised by orders of magnitude.
+      memlock:
+        soft: 536870912  # 512 MiB
+        hard: 536870912  # 512 MiB
     restart: on-failure:10
 
 volumes:
@@ -213,6 +297,8 @@ volumes:
   kms-secret-manager-certs:
   kms-tee-certs:
   kms-api-certs:
+  kms-cptee-srv-certs:
+  kms-cptee-cli-certs:
 
 # networks:
 #   default:

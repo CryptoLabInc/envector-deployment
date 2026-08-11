@@ -151,3 +151,17 @@ Only returns "<host>:<port>" when both are provided; otherwise returns "".
 {{- "" -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+GOMAXPROCS pinned to the container CPU limit via the downward API. Keeps the
+Go runtime from spawning node-core-count threads and getting CFS-throttled into
+missing liveness/readiness probes. Falls back to node CPUs when no cpu limit is
+set. Render inside a container's `env:` list.
+*/}}
+{{- define "envector-chart.gomaxprocsEnv" -}}
+- name: GOMAXPROCS
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.cpu
+      divisor: "1"
+{{- end -}}

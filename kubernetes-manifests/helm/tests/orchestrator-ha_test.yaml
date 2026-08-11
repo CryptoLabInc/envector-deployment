@@ -37,3 +37,13 @@ tests:
     asserts:
       - notExists:
           path: spec.selector["envector.ai/orchestrator-leader"]
+
+  - it: pins GOMAXPROCS to the cpu limit
+    template: templates/orchestrator-deployment.yaml
+    documentIndex: 1
+    set:
+      compute.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="GOMAXPROCS")].valueFrom.resourceFieldRef.resource
+          value: limits.cpu
