@@ -1,4 +1,4 @@
-{{- if and (eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
+{{- if and (eq (dig "election" "backend" "k8s-lease" .Values.backend) "k8s-lease") (gt (int (.Values.backend.replicas | default 1)) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

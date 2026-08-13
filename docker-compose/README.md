@@ -99,6 +99,12 @@ Recommended (helper script in this directory):
 # e.g., ./start_envector.sh -p my-envector --down
 # Remove volumes as well when stopping
 ./start_envector.sh --down --down-volumes
+# NOTE: --down-volumes drops docker named/anonymous volumes. With --keycloak/--audit
+# the Keycloak/metadata Postgres deliberately uses a host bind mount
+# (${DOCKER_VOLUME_DIRECTORY:-./volumes}/pgdata) that survives `down -v`, so routine
+# volume cleanup can't wipe the realm/user/client + envector metadata. A full reset is
+# an explicit delete of that path:
+#   rm -rf ./volumes/pgdata   # or $DOCKER_VOLUME_DIRECTORY/pgdata if overridden
 ```
 
 Advanced (manual docker compose -f):
@@ -207,8 +213,11 @@ docker compose down
 # Using the helper script
 # Keep volumes (default)
 ./start_envector.sh --down
-# Remove volumes
+# Remove volumes (docker named/anonymous only)
 ./start_envector.sh --down --down-volumes
+# With --keycloak/--audit the Keycloak/metadata Postgres deliberately uses a host bind
+# mount that survives `down -v` (protecting the realm/user + metadata from routine cleanup).
+# A full reset is an explicit delete: rm -rf ./volumes/pgdata (or $DOCKER_VOLUME_DIRECTORY/pgdata)
 ```
 
 Remove any extra compose files from the command when taking down layers you did not start. For example, if you launched GPU override:

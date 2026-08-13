@@ -1,0 +1,29 @@
+{{- if eq (toString .Values.observability.metrics.gmp.enabled) "true" }}
+{{- /*
+Google Cloud Managed Service for Prometheus (GMP).
+One PodMonitoring per component that serves /metrics (backend, shaper) on the
+http-health port. Selector matches the pod labels the workloads actually set
+(app + component), so it stays release-scoped and survives <component>.name overrides.
+*/}}
+{{- $interval := .Values.observability.metrics.gmp.interval | default "30s" }}
+{{- range $comp := list (include "envector-chart.backendName" .) (include "envector-chart.shaperName" .) }}
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ include "envector-chart.fullname" $ }}-{{ $comp }}
+  labels:
+    app: {{ include "envector-chart.fullname" $ }}
+    component: {{ $comp }}
+    {{- include "envector-chart.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "envector-chart.fullname" $ }}
+      component: {{ $comp }}
+  endpoints:
+    - port: http-health
+      path: /metrics
+      interval: {{ $interval }}
+{{- end }}
+{{- end }}

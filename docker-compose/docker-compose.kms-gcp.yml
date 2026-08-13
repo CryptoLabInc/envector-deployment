@@ -1,0 +1,413 @@
+# docker-compose.kms-gcp.yml
+# GCP-backed KMS stack: secrets live in GCP Secret Manager and the KEK is a
+# Cloud KMS CMEK. There is NO HashiCorp Vault container and NO Vault
+# init/bootstrap step. The TEE process detects ENVECTOR_KMS_SECRET_BACKEND=gcp
+# and skips every Vault-specific startup step (managed-TEE token bootstrap,
+# AppRole/cert-auth login, the bootstrap_required gate, revoke-on-shutdown).
+# See services/cmd/kms-tee/main.go (gcpBackend) and
+# services/internal/kms/secretmgr/gcp.go / gcp_kek.go.
+#
+# Usage (standalone, with the shared CA overlay):
+#   cd deployment/docker-compose && \
+#     docker compose -f docker-compose.ca.yml -f docker-compose.kms-gcp.yml up
+#
+# The shared CA overlay (docker-compose.ca.yml) owns step-ca; the cert-init job
+# defined HERE requests the kms-api (external KMS API TLS) and kms-tee (internal
+# kms<->kms-tee mTLS) certificates from step-ca. No Vault certs are requested.
+#
+# Bind-mount paths use ${START_ENVECTOR_COMPOSE_DIR:-.} so they resolve both
+# when a start script sets --project-directory to the repo root and when running
+# standalone from this directory.
+#
+# envector-kms-tee container separation (gap-004 §2.1.2, §5.1, §6.1):
+#   - envector-kms     (build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
+#   - envector-kms-tee (build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
+# Wire-level isolation: envector-kms-tee uses expose: not ports:, so it is
+# reachable only on the compose network.
+#
+# ====================================================================
+# GCP PRECONDITIONS (MUST be satisfied before `up`)
+# ====================================================================
+# 1. APIs enabled on the project ${ENVECTOR_KMS_GCP_PROJECT}:
+#      - secretmanager.googleapis.com   (GCP Secret Manager)
+#      - cloudkms.googleapis.com        (Cloud KMS)
+#      - iamcredentials.googleapis.com  (per-role mode ONLY: SA impersonation
+#        mints tokens via iamcredentials.generateAccessToken; without it the
+#        first per-role RPC fails even when IAM grants are correct)
+#    gcloud services enable secretmanager.googleapis.com cloudkms.googleapis.com \
+#      --project "${ENVECTOR_KMS_GCP_PROJECT}"
+#    # per-role mode additionally:
+#    gcloud services enable iamcredentials.googleapis.com \
+#      --project "${ENVECTOR_KMS_GCP_PROJECT}"
+#
+# 2. The CMEK KEY RING must ALREADY exist. Cloud KMS does not allow creating a
+#    key ring implicitly, so the key ring is the minimum standing infra.
+#    Location is "global" for P0 (see gcpDefaultKMSLocation in gcp.go).
+#    The CryptoKey (CMEK) SHOULD be pre-created in production. EnsureKEK does
+#    auto-create it on demand (gcp_kek.go: GetCryptoKey -> on NotFound,
+#    CreateCryptoKey purpose ENCRYPT_DECRYPT) BUT only if the ADC principal also
+#    holds cloudkms.cryptoKeys.create. The IAM documented below (precondition 3,
+#    roles/cloudkms.cryptoKeyEncrypterDecrypter) deliberately does NOT grant
+#    cloudkms.cryptoKeys.create, so in THIS documented deployment the CryptoKey
+#    must pre-exist.
+#    gcloud kms keyrings create "${ENVECTOR_KMS_GCP_KMS_KEYRING}" \
+#      --location global --project "${ENVECTOR_KMS_GCP_PROJECT}"
+#    gcloud kms keys create "${ENVECTOR_KMS_GCP_KMS_KEY}" \
+#      --keyring "${ENVECTOR_KMS_GCP_KMS_KEYRING}" --location global \
+#      --purpose encryption --project "${ENVECTOR_KMS_GCP_PROJECT}"
+#    Per-type CMEK split ONLY (ENVECTOR_KMS_GCP_KMS_KEY_METADATA set below): the
+#    metadata DEK is wrapped under a SECOND key that keygen also EnsureKEK-reads, so
+#    it must ALSO pre-exist (same keyring; the documented IAM grants no
+#    cryptoKeys.create), else the first metadata seal fails NOT_FOUND:
+#    gcloud kms keys create "${ENVECTOR_KMS_GCP_KMS_KEY_METADATA}" \
+#      --keyring "${ENVECTOR_KMS_GCP_KMS_KEYRING}" --location global \
+#      --purpose encryption --project "${ENVECTOR_KMS_GCP_PROJECT}"
+#
+# 3. IAM. The grants depend on the credential mode (see the per-role env block
+#    on envector-kms-tee below):
+#    SINGLE-SA mode (no ENVECTOR_KMS_GCP_SA_* set): the ONE identity behind ADC
+#    (the principal in adc.json) gets the direct data-plane roles, because every
+#    TEE role acts as that identity:
+#      - roles/secretmanager.admin (or a tighter custom role granting
+#        secrets.{create,get,list,delete} + versions.{access,add,get,list,disable,
+#        destroy}) on the project — single-SA does every role's work, so it needs
+#        the full union (there is no secretmanager.secrets.access; payload reads
+#        are versions.access, and versions add/get/list/disable/destroy cover
+#        write + suspend/destroy).
+#      - roles/cloudkms.cryptoKeyEncrypterDecrypter PLUS cloudkms.cryptoKeys.get
+#        (roles/cloudkms.viewer) on the CMEK key: the TEE wraps/unwraps the DEK
+#        envelope, AND keygen's EnsureKEK calls GetCryptoKey before the first seal,
+#        which cryptoKeyEncrypterDecrypter alone does NOT permit (PERMISSION_DENIED
+#        otherwise). Per-type split: grant BOTH on BOTH ${ENVECTOR_KMS_GCP_KMS_KEY}
+#        and ${ENVECTOR_KMS_GCP_KMS_KEY_METADATA} (the single identity seals/unseals
+#        both key types).
+#    PER-ROLE mode (all 5 ENVECTOR_KMS_GCP_SA_* set): the base ADC identity must
+#    NOT hold the direct SM/KMS roles above. In per-role mode the base credential
+#    is used ONLY to mint impersonation tokens (every SM/KMS client is built with
+#    option.WithTokenSource for the role SA, see gcp.go newGCPImpersonating), so
+#    it needs ONLY:
+#      - roles/iam.serviceAccountTokenCreator on EACH of the 5 role SAs.
+#      user-ADC edge: if the base credential is a local authorized_user ADC
+#      (gcloud auth application-default login) with a quota project set, the
+#      target SAs may ALSO need serviceusage.services.use
+#      (roles/serviceusage.serviceUsageConsumer) on the quota project for
+#      generateAccessToken; a WIF / attested-SA base does not.
+#    The SM/KMS roles move ONTO the per-role SAs, each scoped to only what its
+#    role does. There is NO secretmanager.secrets.access permission; payload reads
+#    are secretmanager.versions.access. SM WRITE = secrets.{create,get,list,delete}
+#    + versions.{access,add,get,list,disable,destroy} (roles/secretmanager.admin or
+#    custom; versions.access = keygen/rotate read payloads, versions.get/list =
+#    rotate suspend/destroy: DeactivateSecKey -> GetSecretVersion, DestroySecKey ->
+#    ListSecretVersions). SM READ (payload) = secrets.get + versions.access
+#    (secretAccessor); SM LIST (inventory) = + secrets.list + versions.list (viewer).
+#    keygen: SM WRITE + cloudkms encrypt + cloudkms.viewer; rotate: SM WRITE +
+#    encrypt/decrypt + cryptoKeyVersions.create + cryptoKeys.update; score-decryptor &
+#    metadata-cipher: SM READ (payload) + cloudkms DECRYPT only (no viewer/list —
+#    data path is AccessSecretVersion; their Health RPC lists but the container
+#    healthcheck uses a static status); key-info (key inventory): SM READ + SM LIST.
+#    Per-type split (per-role mode): keygen/rotate take their Cloud KMS grants on
+#    BOTH ${ENVECTOR_KMS_GCP_KMS_KEY} and ${ENVECTOR_KMS_GCP_KMS_KEY_METADATA};
+#    score-decryptor DECRYPT on the sk key ONLY, metadata-cipher DECRYPT on the
+#    metadata key ONLY (that split is the boundary). The gcp/kms-iam Terraform
+#    module provisions this per-key.
+#    Granting the base ADC the direct SM/KMS
+#    roles in per-role mode defeats the boundary: the credential mounted into
+#    kms-tee could then read/unseal keys directly, bypassing the role SAs.
+#
+# 4. Application Default Credentials (ADC). The TEE uses standard Google client
+#    libraries (secretmanager.NewClient / kms.NewKeyManagementClient) which read
+#    GOOGLE_APPLICATION_CREDENTIALS. For local runs we mount the host ADC file
+#    (typically produced by `gcloud auth application-default login`) read-only
+#    into the container at /creds/adc.json. Override GCP_ADC_PATH to point at a
+#    service-account key json instead. The ADC and GCP backend env are mounted
+#    ONLY into envector-kms-tee. The control plane (envector-kms) does NOT
+#    receive GCP credentials: least-privilege means only the TEE can read a
+#    sealed sk and unwrap the DEK. Forward-compat wiring for the control plane
+#    is deliberately omitted so a non-TEE container can never reconstruct sk.
+# ====================================================================
+services:
+  kms-storage:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+    # Host publishing is optional; the KMS service reaches MinIO over the
+    # compose network, so keep this disabled by default.
+    # ports:
+    #   - ${ENVECTOR_KMS_MINIO_HOST_PORT:-0}:9000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: on-failure:10
+
+  # cert-init reuses the SHARED kms/cert-init-entrypoint.sh unmodified. That
+  # script always issues five certs (secret-manager, kms-tee, kms-api,
+  # cp-tee-srv, cp-tee-cli). On the GCP path three are consumed:
+  #   - kms-api: the external KMS API (HTTP + gRPC) is served over TLS with it.
+  #   - cp-tee-srv / cp-tee-cli: the internal kms<->kms-tee gRPC link now runs
+  #     mTLS on the compose network. envector-kms-tee presents cp-tee-srv and
+  #     verifies the control plane's cp-tee-cli leaf; envector-kms presents
+  #     cp-tee-cli and verifies cp-tee-srv. Both pin the peer SAN against the
+  #     shared step-ca root (same wiring as docker-compose.kms.yml).
+  #   - There is no Vault, so the secret-manager and kms-tee (Vault cert-auth
+  #     CLIENT) leaves the script still issues are unused and discarded.
+  # We therefore mount kms-api-certs plus the cp-tee-srv/cp-tee-cli volumes.
+  cert-init:
+    image: smallstep/step-cli:0.30.2
+    user: "0:0"
+    entrypoint: ["/cert-init-entrypoint.sh"]
+    environment:
+      CERTS_DIR: /certs
+      STEP_CA_URL: "${STEP_CA_URL:-https://step-ca:9000}"
+      STEP_CA_PROVISIONER: "${STEP_CA_PROVISIONER:-envector-workloads}"
+      STEP_CA_PASSWORD_FILE: /step-secrets/step_ca_password
+      KMS_API_TLS_CN: "${KMS_API_TLS_CN:-envector-kms}"
+      KMS_API_TLS_DNS: "${KMS_API_TLS_DNS:-envector-kms,localhost}"
+      KMS_API_TLS_IP: "${KMS_API_TLS_IP:-127.0.0.1}"
+      # Internal-gRPC (:50062) mTLS pair: cp-tee-srv = server cert (envector-kms-tee),
+      # cp-tee-cli = client cert (envector-kms control plane). Distinct SANs
+      # (cptee-server / cptee-client) so each side pins the peer's identity and a
+      # different leaf from the shared step-ca root cannot impersonate either endpoint.
+      CPTEE_SRV_TLS_CN: "${CPTEE_SRV_TLS_CN:-cptee-server}"
+      CPTEE_SRV_TLS_DNS: "${CPTEE_SRV_TLS_DNS:-cptee-server}"
+      CPTEE_CLI_TLS_CN: "${CPTEE_CLI_TLS_CN:-cptee-client}"
+      CPTEE_CLI_TLS_DNS: "${CPTEE_CLI_TLS_DNS:-cptee-client}"
+    volumes:
+      - ${START_ENVECTOR_COMPOSE_DIR:-.}/kms/cert-init-entrypoint.sh:/cert-init-entrypoint.sh:ro
+      - envector-ca-secrets:/step-secrets:ro
+      - envector-ca-certs:/certs/ca:ro
+      - kms-api-certs:/certs/kms-api
+      - kms-cptee-srv-certs:/certs/cp-tee-srv
+      - kms-cptee-cli-certs:/certs/cp-tee-cli
+    depends_on:
+      step-ca:
+        condition: service_healthy
+    restart: "no"
+
+  envector-kms:
+    image: "${ENVECTOR_KMS_IMAGE_NAME:-envector-kms}:${ENVECTOR_KMS_TAG:-latest}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    ports:
+      - ${ENVECTOR_KMS_GRPC_HOST_PORT:-0}:${ENVECTOR_KMS_GRPC_PORT:-50060}
+      - ${ENVECTOR_KMS_HTTP_HOST_PORT:-0}:${ENVECTOR_KMS_HTTP_PORT:-8080}
+    environment:
+      ENVECTOR_KMS_PORT: "${ENVECTOR_KMS_GRPC_PORT:-50060}"
+      ENVECTOR_KMS_HTTP_PORT: "${ENVECTOR_KMS_HTTP_PORT:-8080}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_KEY_DIR: "/data/keys"
+      ENVECTOR_KMS_DEFAULT_PRESET: "${ENVECTOR_KMS_DEFAULT_PRESET:-ip3}"
+      ENVECTOR_KMS_DEFAULT_EVAL_MODE: "${ENVECTOR_KMS_DEFAULT_EVAL_MODE:-mms32}"
+      ENVECTOR_KMS_MINIO_ENDPOINT: "${ENVECTOR_KMS_MINIO_ENDPOINT:-kms-storage:9000}"
+      ENVECTOR_KMS_MINIO_ACCESS_KEY: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_SECRET_KEY: "${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}"
+      ENVECTOR_KMS_MINIO_BUCKET: "${ENVECTOR_KMS_MINIO_BUCKET:-kms-keys}"
+      ENVECTOR_KMS_MINIO_USE_SSL: "false"
+      ENVECTOR_KMS_TEE_ADDR: "envector-kms-tee:${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      # --- GCP secret backend: deliberately NOT wired here ---
+      # The control plane (CGO_ENABLED=0, no libevi.so) does not call GCP. It
+      # proxies every secret/KEK operation to envector-kms-tee, which is the
+      # only container that reads the GCP backend env and holds the ADC. By
+      # least-privilege we keep ENVECTOR_KMS_SECRET_BACKEND, the GCP project /
+      # keyring / key / prefix env, and GOOGLE_APPLICATION_CREDENTIALS off this
+      # service so it cannot read a sealed sk or unwrap the DEK. Only the TEE
+      # can read/unwrap sk.
+      # --- auth (optional, same as the Vault stack) ---
+      ENVECTOR_KMS_AUTH_JWKS_URL: "${ENVECTOR_KMS_AUTH_JWKS_URL:-}"
+      ENVECTOR_KMS_AUTH_OIDC_ISSUER: "${ENVECTOR_KMS_AUTH_OIDC_ISSUER:-}"
+      ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES: "${ENVECTOR_KMS_AUTH_ALLOWED_AUDIENCES:-}"
+      ENVECTOR_KMS_AUTH_ROLE_CLAIM: "${ENVECTOR_KMS_AUTH_ROLE_CLAIM:-envector_roles}"
+      ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM: "${ENVECTOR_KMS_AUTH_PRINCIPAL_CLAIM:-sub}"
+      ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON: "${ENVECTOR_KMS_AUTH_CAPABILITY_POLICY_JSON:-}"
+      ENVECTOR_JWT_LEEWAY_SECONDS: "${ENVECTOR_JWT_LEEWAY_SECONDS:-0}"
+      # --- external API TLS (kms-api cert from step-ca) ---
+      ENVECTOR_KMS_HTTP_TLS_CERT: /certs/kms-api/kms-api.crt
+      ENVECTOR_KMS_HTTP_TLS_KEY: /certs/kms-api/kms-api.key
+      ENVECTOR_KMS_GRPC_TLS_CERT: /certs/kms-api/kms-api.crt
+      ENVECTOR_KMS_GRPC_TLS_KEY: /certs/kms-api/kms-api.key
+      ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS: "${ENVECTOR_KMS_REQUIRE_EXTERNAL_TLS:-true}"
+      # Internal mTLS to envector-kms-tee (:50062): present the control-plane
+      # client cert and verify the tee server cert against the step-ca root.
+      ENVECTOR_KMS_TEE_TLS_CLIENT_CERT: /certs/cp-tee-cli/tls.crt
+      ENVECTOR_KMS_TEE_TLS_CLIENT_KEY: /certs/cp-tee-cli/tls.key
+      ENVECTOR_KMS_TEE_TLS_SERVER_CA: /certs/ca/root_ca.crt
+      ENVECTOR_KMS_TEE_TLS_SERVER_NAME: "${ENVECTOR_KMS_TEE_TLS_SERVER_NAME:-cptee-server}"
+      ENVECTOR_KMS_TEE_REQUIRE_MTLS: "${ENVECTOR_KMS_TEE_REQUIRE_MTLS:-true}"
+    volumes:
+      - kms-api-certs:/certs/kms-api:ro
+      # Control-plane client cert + CA root for the internal mTLS link to
+      # envector-kms-tee (:50062).
+      - kms-cptee-cli-certs:/certs/cp-tee-cli:ro
+      - envector-ca-certs:/certs/ca:ro
+      # No ADC mount here (least-privilege): the control plane never calls GCP,
+      # so it must not hold the credential that could unwrap a sealed sk. The
+      # ADC is mounted only into envector-kms-tee.
+    depends_on:
+      kms-storage:
+        condition: service_healthy
+      # service_started (not service_healthy): on GCP the TEE is immediately
+      # SERVING (no bootstrap_required gate), but cert-init must finish first so
+      # the kms-tee mTLS material exists. We gate on cert-init for certs and on
+      # the TEE process being up. teeclient.New uses lazy grpc.NewClient so a
+      # service_started dependency is safe (gap-004 §6.1, §6.2.2).
+      cert-init:
+        condition: service_completed_successfully
+      envector-kms-tee:
+        condition: service_started
+    # Disable core dumps so secret key material can't leak into a dump file.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    restart: on-failure:10
+
+  envector-kms-tee:
+    image: "${ENVECTOR_KMS_TEE_IMAGE_NAME:-envector-kms-tee}:${ENVECTOR_KMS_TEE_TAG:-${ENVECTOR_KMS_TAG:-latest}}"
+    pull_policy: "${PULL_POLICY:-if_not_present}"
+    init: true
+    # HOST PUBLISH FORBIDDEN (gap-004 §5.1). expose: only so the container is
+    # reachable solely on the compose network.
+    expose:
+      - "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+    environment:
+      ENVECTOR_KMS_TEE_GRPC_PORT: "${ENVECTOR_KMS_TEE_GRPC_PORT:-50062}"
+      ENVECTOR_KMS_LOG_LEVEL: "${ENVECTOR_KMS_LOG_LEVEL:-info}"
+      ENVECTOR_KMS_DEVICE_TYPE: "${ENVECTOR_KMS_DEVICE_TYPE:-cpu}"
+      ENVECTOR_KMS_DECRYPT_TOPK_JOBS: "${ENVECTOR_KMS_DECRYPT_TOPK_JOBS:-1}"
+      # Bound plaintext secret-key residency during batch decrypt (GAP-013): a
+      # scope re-unseals a fresh key once it has processed this many items or been
+      # open this long, zeroizing the prior key. Defaults mirror config.go
+      # (10000 items / 30s); <=0 on either axis disables that axis. The item unit
+      # is SHARD BLOBS, not result rows -- one shard can carry many rows, so size
+      # this against shard count, not against the requested top-k.
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_ITEMS:-10000}"
+      ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION: "${ENVECTOR_KMS_DECRYPT_MAX_BATCH_DURATION:-30s}"
+      # Cap concurrent DecryptScores RPCs. Each in-flight decrypt mlocks
+      # its own plaintext key region, so this bounds the PEAK locked-key footprint;
+      # the finite memlock ceiling below is the hard backstop behind it. Default 32
+      # matches the memlock sizing envelope; unset/0 is normalized UP to that finite
+      # default in config.go (it never means "unbounded" -- that is the OOM it stops).
+      ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES: "${ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES:-32}"
+      # --- GCP secret backend (no Vault) ---
+      # ENVECTOR_KMS_SECRET_BACKEND=gcp makes the TEE skip ALL Vault startup:
+      # no managed-TEE token bootstrap, no AppRole/cert-auth login, no
+      # bootstrap_required gate, no revoke-on-shutdown. No KMS_VAULT_* env and
+      # no _SECRET_MANAGER_ADDR / _SECRET_MANAGER_MOUNT / _TRANSIT_MOUNT is read
+      # on this path. ENVECTOR_KMS_SEAL_MODE, however, IS consulted: it defaults
+      # to "vault-transit" (config.go), which TransitSealMode() treats as the
+      # transit seal and which gates the Cloud KMS DEK envelope wrap in
+      # tee/keygen.go (if TransitSealMode(cfg.SealMode)). The seal mode now ALSO
+      # accepts the backend-neutral aliases "kek" / "envelope" / "cloud-kms",
+      # each equivalent to the "vault-transit" default for enabling the Cloud KMS
+      # DEK wrap, so the GCP path can be named without Vault-specific wording. An
+      # UNKNOWN seal mode is now REJECTED at startup: a typo or any unrecognized
+      # value fails loudly instead of silently writing keys unsealed. Left unset
+      # here so the default seal mode enables the GCP DEK wrap; do not assume it
+      # is unread.
+      ENVECTOR_KMS_SECRET_BACKEND: gcp
+      ENVECTOR_KMS_GCP_PROJECT: "${ENVECTOR_KMS_GCP_PROJECT}"
+      ENVECTOR_KMS_GCP_KMS_KEYRING: "${ENVECTOR_KMS_GCP_KMS_KEYRING}"
+      ENVECTOR_KMS_GCP_KMS_KEY: "${ENVECTOR_KMS_GCP_KMS_KEY}"
+      # Optional metadata CMEK (per-type split); empty => single-CMEK fallback.
+      ENVECTOR_KMS_GCP_KMS_KEY_METADATA: "${ENVECTOR_KMS_GCP_KMS_KEY_METADATA:-}"
+      ENVECTOR_KMS_GCP_SECRET_PREFIX: "${ENVECTOR_KMS_GCP_SECRET_PREFIX:-envector-kms}"
+      # --- Per-role least-privilege impersonation (ES2-2107) ---
+      # All five set -> each TEE role impersonates its own SA (per-role mode);
+      # none set -> single ambient ADC (default); a partial set, or duplicate SAs
+      # across roles, fails at startup. Forwarded with ${VAR:-} so an unset var is
+      # empty and single-SA mode is preserved. Per-role mode requires the IAM
+      # Credentials API (iamcredentials.googleapis.com, precondition 1); the base
+      # ADC identity gets ONLY roles/iam.serviceAccountTokenCreator on each SA
+      # (NOT the precondition-3 SM/KMS roles, which move onto the per-role SAs).
+      ENVECTOR_KMS_GCP_SA_KEYGEN: "${ENVECTOR_KMS_GCP_SA_KEYGEN:-}"
+      ENVECTOR_KMS_GCP_SA_ROTATE: "${ENVECTOR_KMS_GCP_SA_ROTATE:-}"
+      ENVECTOR_KMS_GCP_SA_KEY_INFO: "${ENVECTOR_KMS_GCP_SA_KEY_INFO:-}"
+      ENVECTOR_KMS_GCP_SA_SCORE_DECRYPTOR: "${ENVECTOR_KMS_GCP_SA_SCORE_DECRYPTOR:-}"
+      ENVECTOR_KMS_GCP_SA_METADATA_CIPHER: "${ENVECTOR_KMS_GCP_SA_METADATA_CIPHER:-}"
+      # Attested-base guard: when true, refuse to start unless the base ADC is a WIF
+      # external_account (default false for non-attested compose). Forwarded so the
+      # documented .env flag actually reaches the TEE.
+      ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE: "${ENVECTOR_KMS_GCP_REQUIRE_ATTESTED_BASE:-false}"
+      # The attested base SA the per-role SAs are impersonated from. Forwarded so the guard
+      # can pin the impersonated SA exactly; unset -> the guard falls back to the weaker
+      # project-domain check.
+      ENVECTOR_KMS_GCP_BASE_SA: "${ENVECTOR_KMS_GCP_BASE_SA:-}"
+      # Pin the exact WIF provider audience (from the kms-wif terraform output). When
+      # attestation is required and this is set, the base ADC must federate through
+      # exactly this provider; unset -> the audience shape is validated but the provider
+      # (image/env attribute condition) is not pinned (a warning is logged).
+      ENVECTOR_KMS_GCP_WIF_AUDIENCE: "${ENVECTOR_KMS_GCP_WIF_AUDIENCE:-}"
+      GOOGLE_APPLICATION_CREDENTIALS: /creds/adc.json
+      # Internal mTLS server on :50062: present the tee server cert and require +
+      # verify the control-plane client cert against the step-ca root. Same wiring
+      # as docker-compose.kms.yml; on GCP the certs come from the step-ca overlay
+      # via cert-init (Confidential Space attestation-bound issuance is separate).
+      ENVECTOR_KMS_TEE_TLS_CERT: /certs/cp-tee-srv/tls.crt
+      ENVECTOR_KMS_TEE_TLS_KEY: /certs/cp-tee-srv/tls.key
+      ENVECTOR_KMS_TEE_TLS_CLIENT_CA: /certs/ca/root_ca.crt
+      # Pin the control-plane client SAN: the verified client leaf must carry this
+      # name, so a different leaf from the shared step-ca root cannot authenticate
+      # as the control plane (defense-in-depth over the chain-only check).
+      ENVECTOR_KMS_TEE_TLS_CLIENT_NAME: "${ENVECTOR_KMS_TEE_TLS_CLIENT_NAME:-cptee-client}"
+      ENVECTOR_KMS_TEE_REQUIRE_MTLS: "${ENVECTOR_KMS_TEE_REQUIRE_MTLS:-true}"
+    volumes:
+      # Host ADC mounted read-only — this is the credential the TEE actually
+      # uses to reach GCP Secret Manager + Cloud KMS.
+      - ${GCP_ADC_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}:/creds/adc.json:ro
+      # Internal mTLS server cert + CA root for the kms<->kms-tee link (:50062).
+      - kms-cptee-srv-certs:/certs/cp-tee-srv:ro
+      - envector-ca-certs:/certs/ca:ro
+    # No depends_on: kms-secret-manager (there is no Vault/OpenBao on GCP). The
+    # internal kms<->kms-tee gRPC link now runs mTLS via the cp-tee certs
+    # (cmd/kms-tee/main.go serves the KmsTeeService over TLS using the cp-tee-srv
+    # cert), so the TEE needs its server cert before it can listen: gate on
+    # cert-init completing. The TEE is otherwise immediately SERVING on the GCP
+    # path (no bootstrap_required gate).
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+    # Disable core dumps so secret key material can't leak into a dump file.
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+      # Raise the memlock (RLIMIT_MEMLOCK) hard cap so the TEE binary can
+      # mlock secret-key pages that never swap to disk. Container runtimes
+      # default this to 8MiB, which the semaphore-bounded peak below fits into
+      # only barely and with nothing left over; a process can raise its soft
+      # limit no higher than the inherited hard cap, so the ceiling has to be
+      # chosen here rather than left to the runtime default. An attested
+      # Confidential Space deployment cannot set it at all -- the launcher
+      # forwards environment variables and nothing else -- so there the workload
+      # inherits the launcher's limit and logs it at startup instead.
+      #
+      # FINITE, not unlimited. Even on a DEDICATED Confidential VM
+      # (attested Confidential Space, kms-tee as the single workload) an unlimited
+      # (-1) memlock let a burst of parallel DecryptScores RPCs -- each mlocking its
+      # own plaintext key region -- grow the locked, never-swapped RAM without bound
+      # and OOM-kill the CVM. The model is now two layers:
+      #   1. Backpressure: ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES (default 32)
+      #      caps how many decrypt scopes hold a locked key at once, so the PEAK
+      #      locked footprint is bounded by config, not by request arrival rate.
+      #   2. Hard ceiling (this cap): a finite RLIMIT_MEMLOCK backstop so a bug that
+      #      leaks past the semaphore still cannot lock unbounded RAM.
+      # Sizing: docker-compose.kms.yml carries the canonical derivation. In short,
+      # peak locked memory tracks the concurrency cap times roughly 100KiB per live
+      # key (the Go-side region holds the ~1KiB SERIALIZED key, one page; evi
+      # separately locks the far larger EXPANDED C++ key), so the semaphore-bounded
+      # peak is single-digit MiB. 2GiB is a generous CVM ceiling above that, not a
+      # fitted budget (the shared-host profiles use a tighter 512MiB).
+      # Bytes: 2 * 1024 * 1024 * 1024 = 2147483648. Raise only if a deployment
+      # raises ENVECTOR_KMS_DECRYPT_MAX_CONCURRENT_SCOPES by orders of magnitude.
+      memlock:
+        soft: 2147483648  # 2 GiB
+        hard: 2147483648  # 2 GiB
+    restart: on-failure:10
+
+volumes:
+  kms-api-certs:
+  kms-cptee-srv-certs:
+  kms-cptee-cli-certs:

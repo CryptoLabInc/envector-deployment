@@ -1,4 +1,4 @@
-{{- if eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease" }}
+{{- if eq (dig "election" "backend" "k8s-lease" .Values.backend) "k8s-lease" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

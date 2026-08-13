@@ -146,6 +146,7 @@ spec:
                 name: {{ include "envector-chart.fullname" . }}-otel-config
             {{- end }}
           env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
             - name: ENVECTOR_COMPUTE_PORT
               value: {{ .Values.compute.service.port | default 25123 | quote }}
             - name: ENVECTOR_COMPUTE_HOST

@@ -24,6 +24,21 @@ KMS_API_DNS="${KMS_API_TLS_DNS:-envector-kms,localhost}"
 KMS_API_IP="${KMS_API_TLS_IP:-127.0.0.1}"
 KMS_API_CN="${KMS_API_TLS_CN:-}"
 
+# Internal-gRPC (:50062) mutual-TLS pair. CPTEE_SRV_* is the server certificate
+# envector-kms-tee presents on the KmsTeeService listener; CPTEE_CLI_* is the
+# client certificate envector-kms (control plane) presents. Both verify against
+# the same step-ca root — the local realization of the intra-KMS mTLS transport
+# (Confidential Space attestation-bound issuance is a separate path).
+CPTEE_SRV_DIR="${CERTS_DIR}/cp-tee-srv"
+CPTEE_SRV_DNS="${CPTEE_SRV_TLS_DNS:-cptee-server}"
+CPTEE_SRV_IP="${CPTEE_SRV_TLS_IP:-}"
+CPTEE_SRV_CN="${CPTEE_SRV_TLS_CN:-}"
+
+CPTEE_CLI_DIR="${CERTS_DIR}/cp-tee-cli"
+CPTEE_CLI_DNS="${CPTEE_CLI_TLS_DNS:-cptee-client}"
+CPTEE_CLI_IP="${CPTEE_CLI_TLS_IP:-}"
+CPTEE_CLI_CN="${CPTEE_CLI_TLS_CN:-}"
+
 STEP_CA_URL="${STEP_CA_URL:-https://step-ca:9000}"
 STEP_CA_PROVISIONER="${STEP_CA_PROVISIONER:-envector-workloads}"
 STEP_CA_PASSWORD_FILE="${STEP_CA_PASSWORD_FILE:-/step-secrets/step_ca_password}"
@@ -33,7 +48,8 @@ export STEPPATH
 
 log() { echo "[cert-init] $*"; }
 
-mkdir -p "${CA_DIR}" "${SM_DIR}" "${KMS_TEE_DIR}" "${KMS_API_DIR}"
+mkdir -p "${CA_DIR}" "${SM_DIR}" "${KMS_TEE_DIR}" "${KMS_API_DIR}" \
+  "${CPTEE_SRV_DIR}" "${CPTEE_CLI_DIR}"
 
 if [ ! -s "${STEP_CA_PASSWORD_FILE}" ]; then
   log "missing step-ca provisioner password file: ${STEP_CA_PASSWORD_FILE}"
@@ -88,71 +104,34 @@ KMS_TEE_DNS="$(sanitize_csv "${KMS_TEE_DNS}")"
 KMS_TEE_IP="$(sanitize_csv "${KMS_TEE_IP}")"
 KMS_API_DNS="$(sanitize_csv "${KMS_API_DNS}")"
 KMS_API_IP="$(sanitize_csv "${KMS_API_IP}")"
+CPTEE_SRV_DNS="$(sanitize_csv "${CPTEE_SRV_DNS}")"
+CPTEE_SRV_IP="$(sanitize_csv "${CPTEE_SRV_IP}")"
+CPTEE_CLI_DNS="$(sanitize_csv "${CPTEE_CLI_DNS}")"
+CPTEE_CLI_IP="$(sanitize_csv "${CPTEE_CLI_IP}")"
 SM_CN="${SM_CN:-$(subject_from_san "${SM_DNS}" "${SM_IP}" "kms-secret-manager")}"
 KMS_TEE_CN="${KMS_TEE_CN:-$(subject_from_san "${KMS_TEE_DNS}" "${KMS_TEE_IP}" "envector-kms-tee")}"
 KMS_API_CN="${KMS_API_CN:-$(subject_from_san "${KMS_API_DNS}" "${KMS_API_IP}" "envector-kms")}"
+CPTEE_SRV_CN="${CPTEE_SRV_CN:-$(subject_from_san "${CPTEE_SRV_DNS}" "${CPTEE_SRV_IP}" "cptee-server")}"
+CPTEE_CLI_CN="${CPTEE_CLI_CN:-$(subject_from_san "${CPTEE_CLI_DNS}" "${CPTEE_CLI_IP}" "cptee-client")}"
 
-# cert_profile emits a snapshot of the requested inputs so a rerun can skip
-# regeneration when nothing changed.
+# cert_profile emits a PER-CERT snapshot of the inputs that determine a leaf's
+# identity/validity, so a rerun can skip regeneration when nothing about THIS
+# cert changed. Scoping the profile to a single cert (cn/dns/ip) means a
+# SAN/CN/duration change reissues only the affected cert and never rotates the
+# others.
 cert_profile() {
+  cn="$1"
+  dns="$2"
+  ip="$3"
   cat <<EOF
 step_ca_url=${STEP_CA_URL}
 step_ca_provisioner=${STEP_CA_PROVISIONER}
 cert_not_after=${CERT_NOT_AFTER}
-sm_cn=${SM_CN}
-sm_dns=${SM_DNS}
-sm_ip=${SM_IP}
-kms_tee_cn=${KMS_TEE_CN}
-kms_tee_dns=${KMS_TEE_DNS}
-kms_tee_ip=${KMS_TEE_IP}
-kms_api_cn=${KMS_API_CN}
-kms_api_dns=${KMS_API_DNS}
-kms_api_ip=${KMS_API_IP}
+cn=${cn}
+dns=${dns}
+ip=${ip}
 EOF
 }
-
-cert_profile_matches() {
-  cert_profile | cmp -s - "${SM_DIR}/cert.profile" \
-    && cert_profile | cmp -s - "${KMS_TEE_DIR}/cert.profile" \
-    && cert_profile | cmp -s - "${KMS_API_DIR}/cert.profile"
-}
-
-write_cert_profiles() {
-  cert_profile > "${SM_DIR}/cert.profile"
-  cert_profile > "${KMS_TEE_DIR}/cert.profile"
-  cert_profile > "${KMS_API_DIR}/cert.profile"
-  chmod 644 "${SM_DIR}/cert.profile" "${KMS_TEE_DIR}/cert.profile" \
-    "${KMS_API_DIR}/cert.profile"
-}
-
-cert_files_present() {
-  [ -f "${SM_DIR}/tls.crt" ] && [ -f "${SM_DIR}/tls.key" ] \
-    && [ -f "${KMS_TEE_DIR}/kms-tee.crt" ] && [ -f "${KMS_TEE_DIR}/kms-tee.key" ] \
-    && [ -f "${KMS_API_DIR}/kms-api.crt" ] && [ -f "${KMS_API_DIR}/kms-api.key" ]
-}
-
-certs_match_current_ca() {
-  step certificate verify "${SM_DIR}/tls.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1 \
-    && step certificate verify "${KMS_TEE_DIR}/kms-tee.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1 \
-    && step certificate verify "${KMS_API_DIR}/kms-api.crt" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1
-}
-
-# Skip only if existing certs were issued by the current root CA and the
-# certificate input profile still matches the requested SAN/CN/duration values.
-if cert_files_present; then
-  if certs_match_current_ca && cert_profile_matches; then
-    log "certs already present for current CA and profile, skipping generation"
-    exit 0
-  fi
-  log "existing certs do not match current CA/profile, regenerating"
-fi
-
-FINGERPRINT="$(step certificate fingerprint "${CA_DIR}/root_ca.crt")"
-log "bootstrapping step client"
-step ca bootstrap \
-  --ca-url "${STEP_CA_URL}" \
-  --fingerprint "${FINGERPRINT}" \
-  --force >/dev/null
 
 issue_cert() {
   subject="$1"
@@ -188,24 +167,82 @@ issue_cert() {
     ${san_args}
 }
 
-log "requesting secret-manager server certificate from step-ca"
-issue_cert "${SM_CN}" "${SM_DIR}/tls.crt" "${SM_DIR}/tls.key" "${SM_DNS}" "${SM_IP}"
+# bootstrap_once runs `step ca bootstrap` at most one time per invocation, and
+# only when at least one cert actually needs (re)issuing. A fully-current run
+# therefore never contacts the CA.
+STEP_BOOTSTRAPPED=0
+bootstrap_once() {
+  [ "${STEP_BOOTSTRAPPED}" = "1" ] && return 0
+  log "bootstrapping step client"
+  step ca bootstrap \
+    --ca-url "${STEP_CA_URL}" \
+    --fingerprint "$(step certificate fingerprint "${CA_DIR}/root_ca.crt")" \
+    --force >/dev/null
+  STEP_BOOTSTRAPPED=1
+}
 
-log "requesting KMS/TEE client certificate from step-ca"
-issue_cert "${KMS_TEE_CN}" "${KMS_TEE_DIR}/kms-tee.crt" "${KMS_TEE_DIR}/kms-tee.key" "${KMS_TEE_DNS}" "${KMS_TEE_IP}"
+# ensure_cert keeps an existing cert untouched only when it still verifies
+# against the current root CA AND its recorded per-cert profile still matches the
+# requested cn/dns/ip/duration; otherwise it (re)issues ONLY this cert. So a
+# genuine SAN/CN/duration change reissues just the affected cert, and adding a
+# new cert never rotates an existing valid one. This matters for the
+# Vault-cert-auth kms-tee leaf: Vault registers its exact certificate, so a
+# needless reissue would break cert-login against the persisted Vault until an
+# operator re-bootstraps with unseal shares. The leaf is left in place unless
+# ITS own inputs or the CA change.
+ensure_cert() {
+  subject="$1"
+  dir="$2"
+  crt_file="$3"
+  key_file="$4"
+  dns_csv="$5"
+  ip_csv="$6"
 
-log "requesting KMS API server certificate from step-ca"
-issue_cert "${KMS_API_CN}" "${KMS_API_DIR}/kms-api.crt" "${KMS_API_DIR}/kms-api.key" "${KMS_API_DNS}" "${KMS_API_IP}"
+  want="$(cert_profile "${subject}" "${dns_csv}" "${ip_csv}")"
+  if [ -f "${crt_file}" ] && [ -f "${key_file}" ] \
+    && step certificate verify "${crt_file}" --roots "${CA_DIR}/root_ca.crt" >/dev/null 2>&1; then
+    if [ -f "${dir}/cert.profile" ] && printf '%s' "${want}" | cmp -s - "${dir}/cert.profile"; then
+      log "keeping existing cert: ${crt_file}"
+      return 0
+    fi
+    # A profile written by the previous (global-format) script does not match the
+    # new per-cert format even when this cert's inputs are unchanged. Do NOT
+    # rotate a still-valid leaf on that one-time format migration: the Vault
+    # cert-auth kms-tee leaf is pinned as the exact PEM, so reissuing it would
+    # break cert-login against the persisted Vault until an operator re-bootstraps
+    # with unseal shares. Detect a legacy profile by the absence of the new bare
+    # "cn=" line, keep the existing cert, and rewrite the profile in the new
+    # format. A genuine cn/dns/ip change (new-format profile mismatch) still falls
+    # through and reissues only this cert.
+    if [ -f "${dir}/cert.profile" ] && ! grep -q '^cn=' "${dir}/cert.profile"; then
+      log "migrating legacy cert profile, keeping existing cert: ${crt_file}"
+      printf '%s' "${want}" > "${dir}/cert.profile"
+      chmod 644 "${dir}/cert.profile"
+      return 0
+    fi
+  fi
+  bootstrap_once
+  log "issuing certificate from step-ca: ${crt_file}"
+  issue_cert "${subject}" "${crt_file}" "${key_file}" "${dns_csv}" "${ip_csv}"
+  # Runtime containers may run as non-root users. The private keys are isolated
+  # by per-consumer compose volumes, so make each mounted file readable in its
+  # own container while still keeping server/client keys separated across
+  # services.
+  chmod 644 "${crt_file}" "${key_file}"
+  printf '%s' "${want}" > "${dir}/cert.profile"
+  chmod 644 "${dir}/cert.profile"
+}
 
-# Runtime containers may run as non-root users. The private keys are isolated by
-# per-consumer compose volumes, so make each mounted key readable in its own
-# container while still keeping server/client keys separated across services.
-chmod 644 "${SM_DIR}/tls.key" "${KMS_TEE_DIR}/kms-tee.key" "${KMS_API_DIR}/kms-api.key"
-chmod 644 "${SM_DIR}/tls.crt" "${KMS_TEE_DIR}/kms-tee.crt" "${KMS_API_DIR}/kms-api.crt"
-write_cert_profiles
+ensure_cert "${SM_CN}" "${SM_DIR}" "${SM_DIR}/tls.crt" "${SM_DIR}/tls.key" "${SM_DNS}" "${SM_IP}"
+ensure_cert "${KMS_TEE_CN}" "${KMS_TEE_DIR}" "${KMS_TEE_DIR}/kms-tee.crt" "${KMS_TEE_DIR}/kms-tee.key" "${KMS_TEE_DNS}" "${KMS_TEE_IP}"
+ensure_cert "${KMS_API_CN}" "${KMS_API_DIR}" "${KMS_API_DIR}/kms-api.crt" "${KMS_API_DIR}/kms-api.key" "${KMS_API_DNS}" "${KMS_API_IP}"
+ensure_cert "${CPTEE_SRV_CN}" "${CPTEE_SRV_DIR}" "${CPTEE_SRV_DIR}/tls.crt" "${CPTEE_SRV_DIR}/tls.key" "${CPTEE_SRV_DNS}" "${CPTEE_SRV_IP}"
+ensure_cert "${CPTEE_CLI_CN}" "${CPTEE_CLI_DIR}" "${CPTEE_CLI_DIR}/tls.crt" "${CPTEE_CLI_DIR}/tls.key" "${CPTEE_CLI_DNS}" "${CPTEE_CLI_IP}"
 
 log "certs written to ${CERTS_DIR}:"
-log "  CA:              ${CA_DIR}/root_ca.crt"
-log "  Secret manager:  ${SM_DIR}/tls.{crt,key}"
-log "  KMS TEE:         ${KMS_TEE_DIR}/kms-tee.{crt,key}"
-log "  KMS API:         ${KMS_API_DIR}/kms-api.{crt,key}"
+log "  CA:               ${CA_DIR}/root_ca.crt"
+log "  Secret manager:   ${SM_DIR}/tls.{crt,key}"
+log "  KMS TEE (vault):  ${KMS_TEE_DIR}/kms-tee.{crt,key}"
+log "  KMS API:          ${KMS_API_DIR}/kms-api.{crt,key}"
+log "  gRPC :50062 srv:  ${CPTEE_SRV_DIR}/tls.{crt,key}"
+log "  gRPC :50062 cli:  ${CPTEE_CLI_DIR}/tls.{crt,key}"
