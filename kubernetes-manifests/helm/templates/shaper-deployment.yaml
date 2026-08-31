@@ -179,7 +179,7 @@ spec:
             - name: ENVECTOR_HTTP_HEALTH_PORT
               value: {{ .Values.shaper.health.port | quote }}
           {{- if .Values.shaper.license.enabled }}
-            - name: ENVECTOR_LICENSE_TOKEN
+            - name: CL_LICENSE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ $licenseSecretName }}
@@ -343,7 +343,7 @@ spec:
             - name: ENVECTOR_HTTP_HEALTH_PORT
               value: {{ .Values.shaper.health.port | quote }}
           {{- if .Values.shaper.license.enabled }}
-            - name: ENVECTOR_LICENSE_TOKEN
+            - name: CL_LICENSE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ $licenseSecretName }}

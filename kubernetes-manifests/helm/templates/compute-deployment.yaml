@@ -190,7 +190,7 @@ spec:
               value: {{ include "envector-chart.computeName" . | quote }}
             {{- end }}
           {{- if and .Values.compute.license.enabled .Values.compute.license.injectAsEnv }}
-            - name: {{ .Values.compute.license.envVarName | default "ENVECTOR_LICENSE_TOKEN" }}
+            - name: {{ .Values.compute.license.envVarName | default "CL_LICENSE_TOKEN" }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}

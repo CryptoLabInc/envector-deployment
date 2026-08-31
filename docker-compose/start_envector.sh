@@ -31,6 +31,11 @@ Options:
   --num-compute N        Number of compute workers (CPU: scales envector-compute, GPU: enables up to N GPUs)
   --num-shaper N         Number of shaper workers (scales envector-shaper)
   --num-orchestrator N   Number of orchestrator workers (scales envector-orchestrator)
+  --numa-auto            auto-detect NUMA topology and pin compute to a single
+                         NUMA node's physical cores (support svcs to another node)
+  --numa-heavy           like --numa-auto but for heavy-query workloads (high
+                         nprobe): compute spans BOTH nodes' physical cores with
+                         workers scaled to match (light queries: prefer --numa-auto)
   --set KEY=VAL          Inline env override (repeatable). You can also pass KEY=VAL directly.
   --down                 Stop and remove the stack (default action is up -d)
   --down-volumes         When used with --down, also remove named/anonymous volumes (-v).
@@ -47,6 +52,7 @@ Examples (run from this directory):
   ./start_envector.sh --gpu --set ENVECTOR_ENDPOINT_HOST_PORT=50055 --set VERSION_TAG=dev
   ./start_envector.sh --num-compute 4
   ./start_envector.sh --num-shaper 3
+  ./start_envector.sh --numa-auto --num-compute 2
   ./start_envector.sh --kms
   ./start_envector.sh --kms-bao
   ./start_envector.sh --audit
@@ -95,6 +101,7 @@ DRY_RUN=false
 NUM_COMPUTE=1
 NUM_SHAPER=1
 NUM_ORCHESTRATOR=1
+NUMA_AUTO=false
 ENV_OVERRIDES=()
 DOWN_VOLUMES=false
 CONFIG_MODE=false
@@ -298,6 +305,12 @@ while (($#)); do
         echo "--num-orchestrator must be an integer" >&2; exit 1;
       fi
       NUM_ORCHESTRATOR="$2"; shift 2 ;;
+    --numa-auto)
+      NUMA_AUTO=true; shift ;;
+    --numa-heavy)
+      # Heavy-query workload: place compute across both nodes' physical cores.
+      # Light queries do better on a single node — see numa_autopin.sh.
+      NUMA_AUTO=true; export ENVECTOR_COMPUTE_PROFILE=heavy; shift ;;
     --set)
       [[ $# -ge 2 ]] || { echo "--set requires KEY=VAL" >&2; exit 1; }
       ENV_OVERRIDES+=("$2"); shift 2 ;;
@@ -401,6 +414,32 @@ if ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN" && "$ENABLE_PREFLIGHTS"; then
   check_or_login_dockerhub "${probe_tag}"
   ensure_license
   prompt_version_if_needed
+fi
+
+# --numa-auto: detect the host NUMA topology and export per-service cpuset env vars
+# so compute is pinned to a single NUMA node's physical cores (support services to
+# another node). Skipped for teardown/config/dry-run since no container starts.
+if "$NUMA_AUTO" && ! "$DOWN" && ! "$CONFIG_MODE" && ! "$DRY_RUN"; then
+  export ENVECTOR_NUM_COMPUTE="$NUM_COMPUTE"   # let numa_autopin partition per replica
+  numa_autopin="${script_dir}/../scripts/numa/numa_autopin.sh"
+  if [[ ! -f "$numa_autopin" ]]; then
+    echo "Warning: ${numa_autopin} not found; starting without NUMA pinning." >&2
+  elif numa_env="$(bash "$numa_autopin")"; then
+    # numa_autopin.sh emits only `export KEY='value'` lines. Rather than eval the
+    # whole blob, accept only lines matching the exact expected shape and export
+    # KEY=value directly, so a corrupted/edited script can't inject shell code.
+    # (KEY allows digits for the per-replica ENVECTOR_COMPUTE_CPUSET_<n> slices.)
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      if [[ "$line" =~ ^export\ (ENVECTOR_[A-Z0-9_]+|NUM_SEARCH_WORKERS)=\'([^\']*)\'$ ]]; then
+        export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+      else
+        echo "Warning: numa_autopin.sh emitted an unexpected line, ignoring: ${line}" >&2
+      fi
+    done <<< "$numa_env"
+  else
+    echo "Warning: numa_autopin.sh failed; starting without NUMA pinning." >&2
+  fi
 fi
 
 effective_version_override=""
