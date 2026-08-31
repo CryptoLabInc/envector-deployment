@@ -39,7 +39,6 @@ services:
       ENVECTOR_SHAPER_PORT: "${ENVECTOR_SHAPER_PORT:-50056}"
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       CL_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
-      ENVECTOR_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
       EVI_ALLOW_PAGEABLE_SECRET_KEY: "${EVI_ALLOW_PAGEABLE_SECRET_KEY:-0}"
       # Storage
       ENVECTOR_STORAGE_PROVIDER: "${ENVECTOR_STORAGE_PROVIDER:-s3}"
@@ -132,7 +131,6 @@ services:
       ENVECTOR_ORCHESTRATOR_ADDRESS: "envector-orchestrator:${ENVECTOR_ORCHESTRATOR_PORT:-25121}"
       ENVECTOR_LOG_LEVEL: "${ENVECTOR_LOG_LEVEL:-INFO}"
       CL_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
-      ENVECTOR_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
       EVI_ALLOW_PAGEABLE_SECRET_KEY: "${EVI_ALLOW_PAGEABLE_SECRET_KEY:-0}"
       # Limit glibc malloc arenas to prevent memory retention from per-thread
       # arenas under heavy CGO/EVI allocation (default: 8 * num_cpus).
