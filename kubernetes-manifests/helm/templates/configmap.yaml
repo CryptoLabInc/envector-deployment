@@ -102,7 +102,7 @@ data:
   USE_GPU: {{ if eq .Values.compute.variant "gpu" }}"true"{{ else }}"false"{{ end }}
   NUM_SEARCH_WORKERS: {{ .Values.compute.env.numSearchHandler | default 4 | quote }}
   {{- if and .Values.compute.license.enabled .Values.compute.license.mountAsFile }}
-  ENVECTOR_LICENSE_TOKEN: {{ .Values.compute.license.tokenPath | default "/envector/license/token.jwt" | quote }}
+  CL_LICENSE_TOKEN: {{ .Values.compute.license.tokenPath | default "/envector/license/token.jwt" | quote }}
   {{- end }}
 {{- if .Values.shaper.enabled }}
 ---

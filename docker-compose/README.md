@@ -57,14 +57,15 @@ Edit `.env` as needed. `COMPOSE_PROJECT_NAME` customises the network/container p
 
 ```yaml
 environment:
-  ENVECTOR_LICENSE_TOKEN: "${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}"
+  CL_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
+  ENVECTOR_LICENSE_TOKEN: "${CL_LICENSE_TOKEN:-${ENVECTOR_LICENSE_TOKEN:-/envector/license/token.jwt}}"
 # License file mount. Place your license token.jwt file in the same directory as this docker-compose file.
 volumes:
   - ./token.jwt:/envector/license/token.jwt
 ```
 
-- You normally don’t need to set `ENVECTOR_LICENSE_TOKEN` in `.env`; it matches the Docker-mounted path above.
-- If you change the token filename or path, update both `ENVECTOR_LICENSE_TOKEN` and the `volumes` mapping in `docker-compose/docker-compose.envector.yml` accordingly.
+- You normally don’t need to set `CL_LICENSE_TOKEN` in `.env`; it matches the Docker-mounted path above.
+- If you change the token filename or path, update both `CL_LICENSE_TOKEN` and the `volumes` mapping in `docker-compose/docker-compose.envector.yml` accordingly.
 
 ---
 

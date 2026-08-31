@@ -4,8 +4,8 @@
 # init/bootstrap step. The TEE process detects ENVECTOR_KMS_SECRET_BACKEND=gcp
 # and skips every Vault-specific startup step (managed-TEE token bootstrap,
 # AppRole/cert-auth login, the bootstrap_required gate, revoke-on-shutdown).
-# See services/cmd/kms-tee/main.go (gcpBackend) and
-# services/internal/kms/secretmgr/gcp.go / gcp_kek.go.
+# See external/HE-KMS/services/cmd/kms-tee/main.go (gcpBackend) and
+# external/HE-KMS/services/internal/kms/secretmgr/gcp.go / gcp_kek.go.
 #
 # Usage (standalone, with the shared CA overlay):
 #   cd deployment/docker-compose && \
@@ -20,8 +20,8 @@
 # standalone from this directory.
 #
 # envector-kms-tee container separation (gap-004 §2.1.2, §5.1, §6.1):
-#   - envector-kms     (build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
-#   - envector-kms-tee (build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
+#   - envector-kms     (external/HE-KMS/build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
+#   - envector-kms-tee (external/HE-KMS/build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
 # Wire-level isolation: envector-kms-tee uses expose: not ports:, so it is
 # reachable only on the compose network.
 #
@@ -81,12 +81,12 @@
 #        otherwise). Per-type split: grant BOTH on BOTH ${ENVECTOR_KMS_GCP_KMS_KEY}
 #        and ${ENVECTOR_KMS_GCP_KMS_KEY_METADATA} (the single identity seals/unseals
 #        both key types).
-#    PER-ROLE mode (all 5 ENVECTOR_KMS_GCP_SA_* set): the base ADC identity must
+#    PER-ROLE mode (all 6 ENVECTOR_KMS_GCP_SA_* set): the base ADC identity must
 #    NOT hold the direct SM/KMS roles above. In per-role mode the base credential
 #    is used ONLY to mint impersonation tokens (every SM/KMS client is built with
 #    option.WithTokenSource for the role SA, see gcp.go newGCPImpersonating), so
 #    it needs ONLY:
-#      - roles/iam.serviceAccountTokenCreator on EACH of the 5 role SAs.
+#      - roles/iam.serviceAccountTokenCreator on EACH of the 6 role SAs.
 #      user-ADC edge: if the base credential is a local authorized_user ADC
 #      (gcloud auth application-default login) with a quota project set, the
 #      target SAs may ALSO need serviceusage.services.use
@@ -315,7 +315,7 @@ services:
       ENVECTOR_KMS_GCP_KMS_KEY_METADATA: "${ENVECTOR_KMS_GCP_KMS_KEY_METADATA:-}"
       ENVECTOR_KMS_GCP_SECRET_PREFIX: "${ENVECTOR_KMS_GCP_SECRET_PREFIX:-envector-kms}"
       # --- Per-role least-privilege impersonation (ES2-2107) ---
-      # All five set -> each TEE role impersonates its own SA (per-role mode);
+      # All six set -> each TEE role impersonates its own SA (per-role mode);
       # none set -> single ambient ADC (default); a partial set, or duplicate SAs
       # across roles, fails at startup. Forwarded with ${VAR:-} so an unset var is
       # empty and single-SA mode is preserved. Per-role mode requires the IAM
@@ -327,6 +327,7 @@ services:
       ENVECTOR_KMS_GCP_SA_KEY_INFO: "${ENVECTOR_KMS_GCP_SA_KEY_INFO:-}"
       ENVECTOR_KMS_GCP_SA_SCORE_DECRYPTOR: "${ENVECTOR_KMS_GCP_SA_SCORE_DECRYPTOR:-}"
       ENVECTOR_KMS_GCP_SA_METADATA_CIPHER: "${ENVECTOR_KMS_GCP_SA_METADATA_CIPHER:-}"
+      ENVECTOR_KMS_GCP_SA_TOKEN_MATCH_DECRYPTOR: "${ENVECTOR_KMS_GCP_SA_TOKEN_MATCH_DECRYPTOR:-}"
       # Attested-base guard: when true, refuse to start unless the base ADC is a WIF
       # external_account (default false for non-attested compose). Forwarded so the
       # documented .env flag actually reaches the TEE.
