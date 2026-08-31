@@ -9,8 +9,9 @@
 --   boot-time self-heal (ensureKeyStatusColumnAndBackfill,
 --   ensureShardOwnerMergeTaskIDColumn, and the ensureDeprecatedPartialIndexes
 --   goroutine), so this script must carry what those used to add. Three changes:
---     1. PART A global delta added (keys.status, shards.owner_merge_task_id) — the
---        1.4.5→HEAD column delta the binary will no longer auto-add post-simplification.
+--     1. PART A global delta added (keys.status, shards.owner_merge_task_id,
+--        task_queue.created_shard_list) — the 1.4.5→HEAD column delta the binary
+--        will no longer auto-add post-simplification.
 --     2. row_idx_alive partial removed and DROP-ed if present (D1: unused —
 --        getItemIdFromIdMap has no deprecated predicate, so the planner cannot use
 --        a deprecated=FALSE partial; the post-simplification createShardMapTable drops it).
@@ -103,6 +104,28 @@ ALTER TABLE keys ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'a
 -- (claimable), so a plain ADD COLUMN is the full migration; no backfill.
 ALTER TABLE shards ADD COLUMN IF NOT EXISTS owner_merge_task_id BIGINT;
 
+-- task_queue.created_shard_list — JSON []string of merge destination shardIDs
+-- recorded BEFORE the shaper blob write (intent-first anchor for the orphan-blob
+-- startup reclaim). '' = legacy/no dispatch in flight; plain ADD COLUMN with a
+-- default is the full migration, no backfill.
+ALTER TABLE task_queue ADD COLUMN IF NOT EXISTS created_shard_list text DEFAULT '';
+
+-- task_queue.operation_type — mutation that spawned the merge task
+-- (INSERT/DELETE/UPDATE). Nullable; NULL rows fall back to the TargetShardID
+-- heuristic on recovery. No backfill.
+ALTER TABLE task_queue ADD COLUMN IF NOT EXISTS operation_type text;
+
+-- index_operations.orphaned_blob_paths — JSON []string of blobs the update swap
+-- TX orphaned atomically with its commit; sweepOrphanedUpdateBlobs clears it after
+-- reclaim. '' = none pending. Plain ADD COLUMN, no backfill.
+ALTER TABLE index_operations ADD COLUMN IF NOT EXISTS orphaned_blob_paths text DEFAULT '';
+
+-- shards.row_add_count — single-row unzip+append count (ES2-2164). Caps the append
+-- path at the EVI accumulator's RLWE degree (1024), and > 0 marks the shard as an
+-- appended raw shard for merge cutover. Merge-grown shards keep the 0 default, so
+-- a plain ADD COLUMN is the full migration; no backfill.
+ALTER TABLE shards ADD COLUMN IF NOT EXISTS row_add_count bigint NOT NULL DEFAULT 0;
+
 -- keys cleanup-worker getKeysWithStaleStatus probe (status IN pending/deleting).
 CREATE INDEX IF NOT EXISTS idx_keys_status_transient
     ON keys (status, updated_at)
@@ -117,6 +140,12 @@ CREATE INDEX IF NOT EXISTS idx_keys_status_transient
 CREATE INDEX IF NOT EXISTS idx_task_queue_target_shard_id
     ON task_queue (target_shard_id, status)
     WHERE target_shard_id IS NOT NULL;
+
+-- index_operations (operation_type, state): the update reconciliation/backstop
+-- sweeps scan by this pair. Name matches the GORM tag so initSchema and upgrade
+-- converge. Non-CONCURRENTLY as it runs inside PART A's transaction.
+CREATE INDEX IF NOT EXISTS idx_index_operations_type_state
+    ON index_operations (operation_type, state);
 
 -- Named partitions. A partition is a separate physical index
 -- sharing the parent's schema/key/centroids; `partitions` maps
@@ -262,15 +291,13 @@ CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_alive
 CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_deprecated
     ON <index_name>_item_shard_map (shard_id)
     WHERE deprecated = TRUE;
--- (d) Drop the unused row_idx_alive partial. getItemIdFromIdMap probes by
---     (shard_id, row_idx) with NO deprecated predicate, so the planner cannot use
---     a deprecated=FALSE partial — it is write overhead only (D1). 1.4.5 itself
---     never created idx_<idx>_item_shard_map_row_idx_alive (its goroutine targeted
---     the OLD <idx>_shard_map table); this DROP only fires for a DB already booted
---     on pre-simplification HEAD, where ensureDeprecatedPartialIndexes built it under this
---     exact name. Harmless no-op otherwise, and keeps a 1.4.5-upgraded deployment
---     schema-identical to a fresh post-simplification install.
+-- (d) Drop the old row_idx_alive partial — planner-unusable (query has no
+--     deprecated predicate). No-op unless a pre-simplification boot created it.
 DROP INDEX IF EXISTS idx_<index_name>_item_shard_map_row_idx_alive;
+-- (e) Full (shard_id, row_idx) index replacing the dropped partial (d) — this one
+--     IS planner-usable and serves getItemIdFromIdMap's per-search resolution.
+CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_shard_row
+    ON <index_name>_item_shard_map (shard_id, row_idx);
 
 -- Step 6b: Foreign key item_id → <index_name>_ctxt_map(item_id).
 -- Matches the new-index path (createShardMapTable, index_shardmap.go), which

@@ -1,4 +1,5 @@
-{{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
+{{- /* dig defaults only when the key is absent; an explicit "" disables election. */ -}}
+{{- $electionBackend := dig "election" "backend" "k8s-lease" .Values.orchestrator }}
 {{- $orchestratorLeaderOnlyHA := and (eq $electionBackend "k8s-lease") (gt (int (.Values.orchestrator.replicas | default 1)) 1) }}
 # Headless service
 apiVersion: v1
@@ -156,6 +157,7 @@ spec:
                 name: {{ include "envector-chart.storageSecretName" . }}
             {{- end }}
           env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
             - name: ENVECTOR_ORCHESTRATOR_PORT
               value: {{ .Values.orchestrator.service.port | default 25121 | quote }}
             - name: ENVECTOR_COMPUTE_HA_BACKEND

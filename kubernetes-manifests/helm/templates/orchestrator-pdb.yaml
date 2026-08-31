@@ -1,4 +1,4 @@
-{{- $electionBackend := .Values.orchestrator.election.backend | default "k8s-lease" }}
+{{- $electionBackend := dig "election" "backend" "k8s-lease" .Values.orchestrator }}
 {{- if and (eq $electionBackend "k8s-lease") (gt (int (.Values.orchestrator.replicas | default 1)) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

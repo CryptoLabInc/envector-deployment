@@ -1,0 +1,39 @@
+suite: endpoint deployment
+tests:
+  - it: pins GOMAXPROCS to the cpu limit
+    template: templates/endpoint-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="GOMAXPROCS")].valueFrom.resourceFieldRef.resource
+          value: limits.cpu
+
+  - it: rejects the pre-rename endpoint.webui key instead of skipping it silently
+    template: templates/endpoint-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      endpoint.webui.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: endpoint.webui was renamed to endpoint.console
+
+  - it: honours endpoint.console.enabled=false
+    template: templates/endpoint-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      endpoint.console.enabled: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_CONSOLE_ENABLED")].value
+          value: "false"
+
+  - it: defaults the console to enabled when endpoint.console omits enabled
+    template: templates/endpoint-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      endpoint.console.foo: bar
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_CONSOLE_ENABLED")].value
+          value: "true"

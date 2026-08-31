@@ -83,3 +83,20 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name=="ENVECTOR_SHAPER_HA_BACKEND")].value
           value: k8s-lease
+
+  - it: pins GOMAXPROCS to the cpu limit and keeps liveness timeout non-aggressive
+    template: templates/shaper-deployment.yaml
+    set:
+      compute.license.token: "dummy-token"
+      shaper.election.backend: ""
+      shaper.replicas: 1
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="GOMAXPROCS")].valueFrom.resourceFieldRef.resource
+          value: limits.cpu
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.timeoutSeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 5

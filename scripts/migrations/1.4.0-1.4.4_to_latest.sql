@@ -77,6 +77,28 @@ ALTER TABLE shards ADD COLUMN IF NOT EXISTS owner_merge_task_id BIGINT;
 --     the literal default backfills them correctly.
 ALTER TABLE keys ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
 
+-- A4b. task_queue.created_shard_list — JSON []string of merge destination
+--      shardIDs recorded BEFORE the shaper blob write (intent-first anchor for
+--      the orphan-blob startup reclaim). '' = legacy/no dispatch in flight;
+--      plain ADD COLUMN with a default is the full migration, no backfill.
+ALTER TABLE task_queue ADD COLUMN IF NOT EXISTS created_shard_list text DEFAULT '';
+
+-- A4c. task_queue.operation_type — mutation that spawned the merge task
+--      (INSERT/DELETE/UPDATE). Nullable; NULL rows fall back to the
+--      TargetShardID heuristic on recovery. No backfill.
+ALTER TABLE task_queue ADD COLUMN IF NOT EXISTS operation_type text;
+
+-- A4d. index_operations.orphaned_blob_paths — JSON []string of blobs the update
+--      swap TX orphaned atomically with its commit; sweepOrphanedUpdateBlobs clears
+--      it after reclaim. '' = none pending. Plain ADD COLUMN, no backfill.
+ALTER TABLE index_operations ADD COLUMN IF NOT EXISTS orphaned_blob_paths text DEFAULT '';
+
+-- A4e. shards.row_add_count — single-row unzip+append count (ES2-2164). Caps the
+--      append path at the EVI accumulator's RLWE degree (1024), and > 0 marks the
+--      shard as an appended raw shard for merge cutover. Merge-grown shards keep
+--      the 0 default, so no backfill.
+ALTER TABLE shards ADD COLUMN IF NOT EXISTS row_add_count bigint NOT NULL DEFAULT 0;
+
 -- A5. import_log table — absent in all of 1.4.0–1.4.4; first shipped in 1.4.5.
 --     Mirrors the ImportLog model (models.go:304-319). Timestamps are NOT NULL
 --     with no DB default because GORM sets autoCreateTime/autoUpdateTime in-app;
@@ -124,6 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_keys_status_transient
 CREATE INDEX IF NOT EXISTS idx_task_queue_target_shard_id
     ON task_queue (target_shard_id, status)
     WHERE target_shard_id IS NOT NULL;
+
+-- index_operations (operation_type, state): the update reconciliation/backstop
+-- sweeps scan by this pair. Name matches the GORM tag so initSchema and upgrade
+-- converge. Non-CONCURRENTLY in the app-stopped window (see header).
+CREATE INDEX IF NOT EXISTS idx_index_operations_type_state
+    ON index_operations (operation_type, state);
 
 -- Named partitions. A partition is a separate physical index
 -- sharing the parent's schema/key/centroids; `partitions` maps
@@ -270,9 +298,7 @@ END $$;
 ALTER TABLE <index_name>_shard_map RENAME TO <index_name>_shard_map_old;
 
 -- Step 6: Indexes on the new item_shard_map — exactly the set the post-simplification
--- createShardMapTable produces on a fresh install (D1). The unused
--- idx_<idx>_item_shard_map_row_idx_alive partial is intentionally NOT created:
--- getItemIdFromIdMap has no deprecated predicate, so the planner cannot use it.
+-- createShardMapTable produces on a fresh install (D1).
 -- (a) item_id lookup (DeleteData / cutover WHERE item_id IN ...); the composite
 --     PK cannot serve it since item_id is not the leading column.
 CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_item_id
@@ -285,6 +311,11 @@ CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_alive
 CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_deprecated
     ON <index_name>_item_shard_map (shard_id)
     WHERE deprecated = TRUE;
+-- (d) (shard_id, row_idx) resolution for getItemIdFromIdMap (search hot path).
+--     Full, not partial: the query has no deprecated predicate, so a
+--     deprecated=FALSE partial is planner-unusable (why #1888's was dropped in #1936).
+CREATE INDEX IF NOT EXISTS idx_<index_name>_item_shard_map_shard_row
+    ON <index_name>_item_shard_map (shard_id, row_idx);
 
 -- Step 6b: FK item_id → <idx>_ctxt_map(item_id), matching createShardMapTable.
 -- Added after the backfill so PostgreSQL validates it in a single scan; aborts

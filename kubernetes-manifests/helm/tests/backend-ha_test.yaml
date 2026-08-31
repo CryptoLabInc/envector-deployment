@@ -79,3 +79,10 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: pins GOMAXPROCS to the cpu limit
+    template: templates/backend-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="GOMAXPROCS")].valueFrom.resourceFieldRef.resource
+          value: limits.cpu

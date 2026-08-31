@@ -7,7 +7,9 @@
   /health/ready probe and the new follower stayed 503 forever, deadlocking the rollout.
   The "HA" suffix is kept for naming parity with the compute/orchestrator/shaper vars.
 */ -}}
-{{- $backendLeaderOnlyHA := eq (.Values.backend.election.backend | default "k8s-lease") "k8s-lease" }}
+{{- /* dig defaults only when the key is absent; an explicit "" disables election (HA off). */ -}}
+{{- $backendElectionBackend := dig "election" "backend" "k8s-lease" .Values.backend }}
+{{- $backendLeaderOnlyHA := eq $backendElectionBackend "k8s-lease" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -150,10 +152,11 @@ spec:
                 name: {{ include "envector-chart.storageSecretName" . }}
             {{- end }}
           env:
+            {{- include "envector-chart.gomaxprocsEnv" . | nindent 12 }}
             - name: ENVECTOR_BACKEND_PORT
               value: {{ .Values.backend.service.port | default 50051 | quote }}
             - name: ENVECTOR_BACKEND_ELECTION_BACKEND
-              value: {{ .Values.backend.election.backend | default "k8s-lease" | quote }}
+              value: {{ $backendElectionBackend | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
