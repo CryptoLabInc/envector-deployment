@@ -15,8 +15,8 @@
 #
 # envector-kms-tee container separation (gap-004 §2.1.2, §5.1, §6.1).
 # Two images, one binary each:
-#   - envector-kms     (external/HE-KMS/build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
-#   - envector-kms-tee (external/HE-KMS/build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
+#   - envector-kms     (build/docker/kms/Dockerfile):     CGO_ENABLED=0, no libevi.so
+#   - envector-kms-tee (build/docker/kms-tee/Dockerfile): CGO_ENABLED=1, libevi.so + grpc_health_probe
 # Wire-level isolation: envector-kms-tee uses expose: not ports:, so it
 # is reachable only on the compose network (gap-004 §5.1).
 #
