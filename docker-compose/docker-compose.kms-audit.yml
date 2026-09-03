@@ -41,6 +41,9 @@ services:
       ENVECTOR_STORAGE_PASSWORD: "${ENVECTOR_KMS_AUDIT_STORAGE_PASSWORD:-${ENVECTOR_KMS_MINIO_SECRET_KEY:-minioadmin}}"
       ENVECTOR_STORAGE_SECURE: "${ENVECTOR_KMS_AUDIT_STORAGE_SECURE:-false}"
       ENVECTOR_STORAGE_REGION: "${ENVECTOR_KMS_AUDIT_STORAGE_REGION:-us-east-1}"
+      # Empty keeps the adapter's per-provider default -- see .env.example.
+      AWS_REQUEST_CHECKSUM_CALCULATION: "${AWS_REQUEST_CHECKSUM_CALCULATION:-}"
+      AWS_RESPONSE_CHECKSUM_VALIDATION: "${AWS_RESPONSE_CHECKSUM_VALIDATION:-}"
     depends_on:
       kms-audit-logmq:
         condition: service_healthy
