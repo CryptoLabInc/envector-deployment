@@ -314,7 +314,7 @@ services:
       # Optional metadata CMEK (per-type split); empty => single-CMEK fallback.
       ENVECTOR_KMS_GCP_KMS_KEY_METADATA: "${ENVECTOR_KMS_GCP_KMS_KEY_METADATA:-}"
       ENVECTOR_KMS_GCP_SECRET_PREFIX: "${ENVECTOR_KMS_GCP_SECRET_PREFIX:-envector-kms}"
-      # --- Per-role least-privilege impersonation (ES2-2107) ---
+      # --- Per-role least-privilege impersonation ---
       # All five set -> each TEE role impersonates its own SA (per-role mode);
       # none set -> single ambient ADC (default); a partial set, or duplicate SAs
       # across roles, fails at startup. Forwarded with ${VAR:-} so an unset var is

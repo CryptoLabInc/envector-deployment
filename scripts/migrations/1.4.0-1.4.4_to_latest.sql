@@ -93,7 +93,7 @@ ALTER TABLE task_queue ADD COLUMN IF NOT EXISTS operation_type text;
 --      it after reclaim. '' = none pending. Plain ADD COLUMN, no backfill.
 ALTER TABLE index_operations ADD COLUMN IF NOT EXISTS orphaned_blob_paths text DEFAULT '';
 
--- A4e. shards.row_add_count — single-row unzip+append count (ES2-2164). Caps the
+-- A4e. shards.row_add_count — single-row unzip+append count. Caps the
 --      append path at the EVI accumulator's RLWE degree (1024), and > 0 marks the
 --      shard as an appended raw shard for merge cutover. Merge-grown shards keep
 --      the 0 default, so no backfill.
