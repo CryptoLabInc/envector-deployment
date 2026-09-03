@@ -5,7 +5,7 @@
 --       delta + Step 6 (shard_id, row_idx) index those two scripts added in PART A, it
 --       also carries the index_operations.orphaned_blob_paths column +
 --       (operation_type, state) index that update added, and the shards.row_add_count
---       column single-insert immediate search (ES2-2164) added.
+--       column single-insert immediate search added.
 --
 -- created_shard_list: 머지 destination shardID들의 JSON []string. shaper blob
 -- 쓰기 BEFORE에 기록되는 intent-first 앵커로, 크래시 후 살아남은 비-빈 값은
@@ -19,7 +19,7 @@
 -- atomically with the commit. A non-empty value = a committed swap's post-commit
 -- reclaim is incomplete (sweepOrphanedUpdateBlobs clears it after reclaim). '' = none.
 --
--- shards.row_add_count: single-row unzip+append count (ES2-2164). Caps the append
+-- shards.row_add_count: single-row unzip+append count. Caps the append
 -- path at the EVI accumulator's RLWE degree (1024), and > 0 marks the shard as an
 -- appended raw shard that merge cutover treats as an overlap buffer. Merge-grown
 -- shards keep the 0 default, so no backfill.
