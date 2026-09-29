@@ -165,3 +165,19 @@ set. Render inside a container's `env:` list.
       resource: limits.cpu
       divisor: "1"
 {{- end -}}
+
+{{/*
+Container-level securityContext for envector images, which run as uid/gid 1001.
+Set per container, not per pod, so third-party sidecars (e.g. ubbagent) are unaffected.
+*/}}
+{{- define "envector-chart.nonRootSecurityContext" -}}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+{{- end -}}

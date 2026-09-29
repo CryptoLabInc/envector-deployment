@@ -202,7 +202,7 @@ ensure_license() {
   src_abs=$(readlink -f "$src" 2>/dev/null || true)
   local dst_abs
   dst_abs=$(readlink -f "${COMPOSE_DIR}" 2>/dev/null || echo "${COMPOSE_DIR}")/token.jwt
-  cp "${src}" "${token_path}"
+  install -m 0644 "${src}" "${token_path}"
   if [[ -n "$src_abs" ]]; then
     echo "Copied license from: ${src_abs}"
   else

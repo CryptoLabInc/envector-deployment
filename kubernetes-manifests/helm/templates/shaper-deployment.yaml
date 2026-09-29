@@ -96,6 +96,7 @@ spec:
         - name: {{ include "envector-chart.shaperName" . }}
           image: "{{ .Values.shaper.image.repository }}:{{ .Values.shaper.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.shaper.image.pullPolicy | default "IfNotPresent" }}
+          {{- include "envector-chart.nonRootSecurityContext" . | nindent 10 }}
           ports:
             - containerPort: {{ .Values.shaper.service.port | default 50052 }}
             - name: http-health
@@ -267,6 +268,7 @@ spec:
         - name: {{ include "envector-chart.shaperName" . }}
           image: "{{ .Values.shaper.image.repository }}:{{ .Values.shaper.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.shaper.image.pullPolicy | default "IfNotPresent" }}
+          {{- include "envector-chart.nonRootSecurityContext" . | nindent 10 }}
           ports:
             - containerPort: {{ .Values.shaper.service.port | default 50052 }}
             - name: http-health
