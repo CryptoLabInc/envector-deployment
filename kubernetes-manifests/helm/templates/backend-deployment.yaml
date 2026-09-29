@@ -110,6 +110,7 @@ spec:
         - name: {{ include "envector-chart.backendName" . }}
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default "latest" }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy | default "IfNotPresent" }}
+          {{- include "envector-chart.nonRootSecurityContext" . | nindent 10 }}
           ports:
             - containerPort: {{ .Values.backend.service.port | default 50051 }}
             - name: http-health

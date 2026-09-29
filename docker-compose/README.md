@@ -10,8 +10,12 @@ envector-backend:       cryptolabinc/envector-backend:${VERSION_TAG}
 envector-orchestrator:  cryptolabinc/envector-orchestrator:${VERSION_TAG}
 envector-compute:       cryptolabinc/envector-compute:${VERSION_TAG}
 postgres:               postgres:14.9
-minio:                  minio/minio:RELEASE.2023-03-20T20-16-18Z
+minio:                  cryptolabinc/minio:2025-10-15-go1.26.5
 ```
+
+The `cryptolabinc/envector-*` images are private, so run `docker login` before the
+first `docker compose up`. MinIO is ours too — Docker Hub deleted the upstream
+`minio/minio` repository — but that one is public and needs no login.
 
 ## 🧩 Compose File Layout
 

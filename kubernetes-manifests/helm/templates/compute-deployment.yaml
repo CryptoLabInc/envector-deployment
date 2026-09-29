@@ -74,6 +74,8 @@ spec:
       serviceAccountName: {{ include "envector-chart.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken | default true }}
       terminationGracePeriodSeconds: {{ .Values.compute.terminationGracePeriodSeconds | default 120 }}
+      securityContext:
+        fsGroup: 1001
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- range .Values.imagePullSecrets }}
@@ -112,6 +114,7 @@ spec:
           image: "{{ .Values.compute.image.repository }}:{{ .Values.compute.image.tag | default "latest" }}"
           {{ end }}
           imagePullPolicy: {{ .Values.compute.image.pullPolicy | default "IfNotPresent" }}
+          {{- include "envector-chart.nonRootSecurityContext" . | nindent 10 }}
           ports:
             - containerPort: {{ .Values.compute.service.port | default 25123 }}
             - name: http-health
