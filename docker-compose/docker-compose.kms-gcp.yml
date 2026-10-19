@@ -127,7 +127,7 @@
 # ====================================================================
 services:
   kms-storage:
-    image: cryptolabinc/minio:2025-10-15-go1.26.5
+    image: cryptolabinc/minio:2025-10-15-go1.26.9
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: "${ENVECTOR_KMS_MINIO_ACCESS_KEY:-minioadmin}"

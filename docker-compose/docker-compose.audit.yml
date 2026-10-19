@@ -64,7 +64,7 @@ services:
   # ENVECTOR_AUDIT_STORAGE_ADDRESS=audit-storage:${ENVECTOR_AUDIT_STORAGE_PORT:-59000}
   # when you want audit logs to land in a MinIO instance separate from the data-plane storage.
   # audit-storage:
-  #   image: cryptolabinc/minio:2025-10-15-go1.26.5
+  #   image: cryptolabinc/minio:2025-10-15-go1.26.9
   #   restart: on-failure:10
   #   command: server /data --address ":${ENVECTOR_AUDIT_STORAGE_PORT:-59000}" --console-address ":${ENVECTOR_AUDIT_STORAGE_CONSOLE_PORT:-59001}"
   #   # volumes:

@@ -7,7 +7,7 @@
 #   bash scripts/start_envector.sh --kms   (default, TLS)
 services:
   kms-storage:
-    image: cryptolabinc/minio:2025-10-15-go1.26.5
+    image: cryptolabinc/minio:2025-10-15-go1.26.9
     cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     command: server /data --console-address ":9001"
     environment:

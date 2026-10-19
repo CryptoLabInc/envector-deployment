@@ -10,7 +10,7 @@ envector-backend:       cryptolabinc/envector-backend:${VERSION_TAG}
 envector-orchestrator:  cryptolabinc/envector-orchestrator:${VERSION_TAG}
 envector-compute:       cryptolabinc/envector-compute:${VERSION_TAG}
 postgres:               postgres:14.9
-minio:                  cryptolabinc/minio:2025-10-15-go1.26.5
+minio:                  cryptolabinc/minio:2025-10-15-go1.26.9
 ```
 
 The `cryptolabinc/envector-*` images are private, so run `docker login` before the

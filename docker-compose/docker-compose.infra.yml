@@ -16,7 +16,7 @@ services:
       - POSTGRES_SCHEMA=${ENVECTOR_DB_SCHEMA:-public}
 
   storage:
-    image: cryptolabinc/minio:2025-10-15-go1.26.5
+    image: cryptolabinc/minio:2025-10-15-go1.26.9
     cpuset: "${ENVECTOR_INFRA_CPUSET:-}"
     restart: on-failure:10
     environment:
